@@ -1,8 +1,8 @@
 # Project 2: Inter-process Communication Services
 
-**Release Date: Saturday Feb. 11, 2023**
+**Release Date: Sunday Feb. 11, 2024**
 
-**Due Date: Sunday Mar. 12, 2023 @ 11:59pm**
+**Due Date: Monday Mar. 12, 2024 @ 11:59pm**
 
 ---
 
