@@ -1,11 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <mqueue.h>
 #include "tinyfile_lib.h"
 
 int main() {
     const char *message = "Compress input/sloppy_file.gov";
 
-    printf("APP: Calling library (%s)\n", message);
-    send_message(message);
+    printf("APP: Calling library\n");
+	mqd_t my_queue, tf_queue;
+	init_communication(&my_queue, &tf_queue);
+
+	compress_file(my_queue, tf_queue, "sloppy.txt", "sloppy.gov");
+
+	close_communication(my_queue, tf_queue);
     return 0;
 }
