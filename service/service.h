@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #define TINY_FILE_QUEUE "/tinyservice"
+#define SHARED_MEMORY "/tf_mem"
 
 typedef struct message_main {
     unsigned int type;
@@ -12,7 +13,8 @@ typedef struct message_main {
 
 typedef struct message_compress {
     unsigned int type;
-    unsigned int content;
+    unsigned int chunks;
+    unsigned int size;
 } message_compress_t;
 
     typedef struct node node_t;

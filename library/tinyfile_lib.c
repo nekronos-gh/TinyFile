@@ -40,7 +40,7 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
     struct mq_attr attr;
     attr.mq_flags = 0; 		// Blocking queue
     attr.mq_maxmsg = 10; 	// Maximum number of messages in queue
-    attr.mq_msgsize = sizeof(message_main_t); 	// Maximum message size
+    attr.mq_msgsize = sizeof(message_compress_t); 	// Maximum message size
     attr.mq_curmsgs = 0; 	// Number of messages currently in queue
 
     // Create the message queue
@@ -116,7 +116,7 @@ void flood_chunk(const char* chunk_id, size_t size) {
     }
 
     for (size_t i = 0; i < size; ++i) {
-        data[i] = 0xFF;
+        data[i] = 0x46;
     }
 
     munmap(data, size);
@@ -150,10 +150,10 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 	}
 
     // Flood chunks
-    char* chunk_id;
+    char chunk_id[256];
     unsigned int size = message_compress.content2;
     for (int i=0; i<message_compress.content1; i++) {
-        snprintf(chunk_id, sizeof(chunk_id), "/tf_mem%d", i);
+        snprintf(chunk_id, 10, "/tf_mem%d", i);
         flood_chunk(chunk_id, size);
     }
 
