@@ -13,12 +13,12 @@ typedef struct message_main {
 } message_main_t;
 
 
-#define SECTION  0x00
+#define CHUNKS  0x00
 #define WRITE_OK  0x01
-#define COMPRESS_OK 0x02
 typedef struct message_compress {
     unsigned int type;
-	unsigned int content;
+	unsigned int content1;
+    unsigned int content2;
 } message_compress_t;
 
 int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out);

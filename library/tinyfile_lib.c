@@ -5,6 +5,7 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include "tinyfile_lib.h"
 
@@ -94,6 +95,34 @@ long get_file_size(FILE *file) {
     return size;
 }
 
+void flood_chunk(const char* chunk_id, size_t size) {
+    int fd = shm_open(chunk_id, O_RDWR, 0666);
+    if (fd == -1) {
+        perror("shm_open");
+        return;
+    }
+
+    if (ftruncate(fd, size) == -1) {
+        perror("ftruncate");
+        close(fd);
+        return;
+    }
+
+    unsigned char* data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data == MAP_FAILED) {
+        perror("mmap");
+        close(fd);
+        return;
+    }
+
+    for (size_t i = 0; i < size; ++i) {
+        data[i] = 0xFF;
+    }
+
+    munmap(data, size);
+    close(fd);
+}
+
 int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out){
 
 	FILE *file_in = fopen(path_in, "rb");
@@ -120,38 +149,28 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 		return -1;
 	}
 
-	if (message_compress.type != SECTION){
-        perror("Did not receive SECTION from daemon\n");
-		return -1;
-	}
-
-	printf("Now placing uncompressed file in remote section %d \n", message_compress.content);
-
-	// Send that uncompressed file has been written
-	message_compress.type = WRITE_OK;
-	message_compress.content = 0;
-	if (mq_send(my_queue, (char *) &message_compress,  sizeof(message_compress), 0) == -1){
-        perror("mq_receive");
-		return -1;
-	}
-
-	// Wait form compression done 
-	if (mq_receive(my_queue, (char *) &message_compress,  sizeof(message_compress), NULL) == -1){
-		perror("mq_receive");
-		return -1;
-	}
-
-	if (message_compress.type != COMPRESS_OK){
-        perror("Did not receive COMPRESS_DONE from daemon\n");
-		return -1;
-	}
+    // Flood chunks
+    char* chunk_id;
+    unsigned int size = message_compress.content2;
+    for (int i=0; i<message_compress.content1; i++) {
+        snprintf(chunk_id, sizeof(chunk_id), "/tf_mem%d", i);
+        flood_chunk(chunk_id, size);
+    }
 
 	printf("Now getting compressed result\n");
+    // Send message done flodding
+    message_compress.type = WRITE_OK;
+    if (mq_send(my_queue, (char *) &message_compress, sizeof(message_compress), 0) == -1) {
+        perror("mq_send");
+        return -1;
+    }
 
+    /*
 	FILE *file_out = fopen(path_in, "w");
 	if (!file_out) {
 		perror("Could not open output file");
 	}
+    */
 
 	return 0;
 }
