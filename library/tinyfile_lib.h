@@ -3,7 +3,7 @@
 
 #include <mqueue.h>
 
-#define TINY_FILE_QUEUE "/tf/mq"
+#define TINY_FILE_QUEUE "/tinyservice"
 
 #define HELLO 0x00
 #define COMPRESS_START 0x01

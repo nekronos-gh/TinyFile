@@ -13,11 +13,10 @@
 // Start the communication with the Daemon
 int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
 	message_main_t message;
-	mqd_t mq;
 
 	// Open Deamon queue
-	mq = mq_open(TINY_FILE_QUEUE, O_WRONLY);
-    if (mq == (mqd_t)-1) {
+	*tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
+    if (*tf_queue == (mqd_t)-1) {
         perror("mq_open");
 		return -1;
     }
@@ -25,7 +24,8 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
     // Create a Hello message
 	message.type = HELLO;
 	message.content = getpid();
-    if (mq_send(mq, (char *) &message, sizeof(message), 0) == -1) {
+	printf("Now sending hello handshake\n");
+    if (mq_send(*tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
@@ -33,18 +33,18 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
 	char queue_name[64]; // Buffer to hold the queue name
 
     // Format the queue name with the prefix and PID
-    sprintf(queue_name, "/tf/%d", getpid());
+    sprintf(queue_name, "/%d", getpid());
 
     // Set the attributes of the message queue
     struct mq_attr attr;
     attr.mq_flags = 0; 		// Blocking queue
     attr.mq_maxmsg = 10; 	// Maximum number of messages in queue
-    attr.mq_msgsize = 256; 	// Maximum message size
+    attr.mq_msgsize = sizeof(message_main_t); 	// Maximum message size
     attr.mq_curmsgs = 0; 	// Number of messages currently in queue
 
     // Create the message queue
-    mq = mq_open(queue_name, O_CREAT | O_RDWR, 0644, &attr);
-    if (mq == (mqd_t)-1) {
+    *my_queue = mq_open(queue_name, O_CREAT | O_RDWR, 0644, &attr);
+    if (*my_queue == (mqd_t)-1) {
         perror("mq_open");
 		return -1;
     }
@@ -68,7 +68,7 @@ int close_communication(mqd_t my_queue, mqd_t tf_queue){
 
 	// Remove message queue from system
 	char queue_name[64];
-    sprintf(queue_name, "/tf/%d", getpid());
+    sprintf(queue_name, "/%d", getpid());
     if (mq_unlink(queue_name) == -1) {
         perror("mq_unlink");
 		return -1;
@@ -104,6 +104,7 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 
 	message_main_t message_main;
 	
+	printf("Now sending start message\n");
     // Create a Start Compressing message
 	message_main.type = COMPRESS_START;
 	message_main.content = getpid();

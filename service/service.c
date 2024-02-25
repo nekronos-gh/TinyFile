@@ -58,21 +58,24 @@ void handle_compress(unsigned int pid) {
     struct mq_attr attr;
     attr.mq_flags = 0; 
     attr.mq_maxmsg = 10; 
-    attr.mq_msgsize = 8;
+    attr.mq_msgsize = sizeof(message_compress_t);
     attr.mq_curmsgs = 0;
 
     char* queue_string;
-    sprintf(queue_string, "/tf/%d", pid);
-    message_compress_t *buffer = malloc(sizeof(message_compress_t)); 
-    compress_mq = mq_open(queue_string, O_CREAT | O_WRONLY, 0644, &attr);
+    sprintf(queue_string, "/%d", pid);
+    compress_mq = mq_open(queue_string, O_RDWR);
     if (compress_mq == (mqd_t) -1) {
         perror("mq_open");
         exit(1);
     }
     
-    buffer->type = SECTION;
-    buffer->content = key;
-    if (mq_send(compress_mq, (char *)buffer, sizeof(buffer), NULL) == -1) {
+	#define TODO_ERASE_THIS key = 10
+	TODO_ERASE_THIS;
+
+    message_compress_t buffer;
+    buffer.type = SECTION;
+    buffer.content = key;
+    if (mq_send(compress_mq, (char *) &buffer, sizeof(message_compress_t), 0) == -1) {
         perror("mq_send");
         exit(1);
     }
@@ -85,8 +88,7 @@ void handle_compress(unsigned int pid) {
         exit(1);
     }
 
-    buffer = (message_compress_t *)buffer;
-    if (!buffer->type == WRITE_OK) {
+    if (!(buffer.type == WRITE_OK)) {
         // XXX: handle errors
     }
 
@@ -94,9 +96,8 @@ void handle_compress(unsigned int pid) {
     // - Compress file
 
     // Send finished response
-    buffer->type = COMPRESS_OK;
-    buffer->content = NULL;
-    if (mq_send(compress_mq, (char *)buffer, sizeof(buffer), NULL) == -1) {
+    buffer.type = COMPRESS_OK;
+    if (mq_send(compress_mq, (char *) &buffer, sizeof(message_compress_t), 0) == -1) {
         perror("mq_send");
         exit(1);
     }
@@ -115,12 +116,12 @@ int main(int argc, char *argv[]) {
 
     attr.mq_flags = 0; 
     // XXX: choose max size
-    attr.mq_maxmsg = 25; 
-    attr.mq_msgsize = 8; 
+    attr.mq_maxmsg = 10;  // System max limit in: /proc/sys/fs/mqueue/msg_max
+    attr.mq_msgsize = sizeof(message_main_t); 
     attr.mq_curmsgs = 0; 
 
     // Setup main q
-    main_mq = mq_open("/tf/mq", O_CREAT | O_RDONLY, 0644, &attr);
+    main_mq = mq_open(TINY_FILE_QUEUE, O_RDONLY | O_CREAT, 0644, &attr);
     if (main_mq == (mqd_t)-1) {
         perror("mq_open");
         exit(1);
@@ -130,30 +131,32 @@ int main(int argc, char *argv[]) {
     node_t* head = malloc(sizeof(node_t));
 
     ssize_t bytes_read;
-    message_main_t *buffer = malloc(sizeof(message_main_t)); 
+    message_main_t buffer;
     while (1) {
 
         // Read main buffer
-        bytes_read = mq_receive(main_mq, (char *)&buffer, sizeof(message_main_t), NULL);
+        bytes_read = mq_receive(main_mq, (char *) &buffer, sizeof(message_main_t), NULL);
         if (bytes_read < 0) {
             perror("mq_receive");
             exit(1);
         }
+		printf("Recieved MESSAGE (%d) from %d\n", buffer.type, buffer.content);
 
-        buffer = (message_main_t *)buffer;
-        if (buffer->type == INIT) {
-        
-            if (!add_to_llist(&head, buffer->content)) {
+		switch(buffer.type){
+		 case INIT:
+            if (!add_to_llist(&head, buffer.content)) {
                 // XXX: handle errors?
             } 
-        }
-        else if (buffer->content == REQUEST) {
-            handle_compress(buffer->content);
-        }
+			break;
+		case REQUEST:
+            handle_compress(buffer.content);
+			break;
+		default:
+			printf("Message %d not understood\n", buffer.type);
+		}
     }
     
-    // XXX: how to close main q
-
-
+	mq_close(main_mq);
+	mq_unlink(TINY_FILE_QUEUE);
     return 0;
 }

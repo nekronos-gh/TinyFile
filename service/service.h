@@ -2,6 +2,9 @@
 #define __SERVICE
 
 #include <stdlib.h>
+
+#define TINY_FILE_QUEUE "/tinyservice"
+
 typedef struct message_main {
     unsigned int type;
     unsigned int content;
@@ -18,6 +21,7 @@ typedef struct node {
     unsigned int pid;
     int n_request;
 } node_t;
+
 
 
 /// Add new node to head
