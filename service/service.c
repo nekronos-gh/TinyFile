@@ -7,6 +7,7 @@
 #include <getopt.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #include <mqueue.h>
 
 #include "service.h"
@@ -61,7 +62,21 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
     }
 }
 
-void init_shared_memory(size_t num_seg, size_t seg_size, int *segments) {
+void init_mutex(pthread_mutex_t* mutex) {
+	pthread_mutexattr_t mutexAttr;
+	pthread_mutexattr_init(&mutexAttr);
+	pthread_mutexattr_setpshared(&mutexAttr, PTHREAD_PROCESS_SHARED);
+	pthread_mutex_init(mutex, &mutexAttr);
+}
+
+void init_mutex_cond(pthread_cond_t* cond) {
+	pthread_condattr_t condAttr;
+	pthread_condattr_init(&condAttr);
+	pthread_condattr_setpshared(&condAttr, PTHREAD_PROCESS_SHARED);
+	pthread_cond_init(cond, &condAttr);
+}
+
+void init_shared_memory(size_t num_seg, size_t *seg_size, int *segments) {
 	for (size_t i = 0; i < num_seg; ++i) {
         char shm_name[256];
         // Generate a unique name for each segment
@@ -73,15 +88,45 @@ void init_shared_memory(size_t num_seg, size_t seg_size, int *segments) {
             perror("shm_open");
             exit(EXIT_FAILURE);
         }
+		// Setup for sincronization
+		// All this data will be written into shared memory
+		pthread_mutex_t new_mutex;
+		init_mutex(&new_mutex);
+		pthread_cond_t new_cond;
+		init_mutex_cond(&new_cond);
+		unsigned int state = CLEAR;
+		unsigned int data_size = 0;
+		size_t mutex_size = sizeof(new_mutex);
+		size_t cond_size = sizeof(new_cond);
+		size_t uint_size = sizeof(state);
 
         // Set the size of the shared memory object
-        if (ftruncate(shm_fd, seg_size) == -1) {
+		*seg_size += mutex_size + cond_size + 2 * uint_size;
+        if (ftruncate(shm_fd, *seg_size) == -1) {
             perror("ftruncate");
             close(shm_fd);
             exit(EXIT_FAILURE);
         }
 
-        // Close the file descriptor as it's no longer needed after mapping
+		// Write the setup into shared memory
+		void* addr = mmap(NULL, *seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, shm_fd, 0);
+		if (addr == MAP_FAILED) {
+			perror("mmap");
+			continue; // Skip this segment and try the next
+		}
+
+		// Calculate offsets
+		size_t offset = 0;
+		// Copy the data objects into shared memory at the correct offset
+		memcpy((char*)addr + offset, &new_mutex, mutex_size);
+		offset += mutex_size;
+		memcpy((char*)addr + offset, &new_cond, cond_size);
+		offset += cond_size;
+		memcpy((char*)addr + offset, &state, uint_size);
+		offset += uint_size;
+		memcpy((char*)addr + offset, &data_size, uint_size);
+
+		munmap(addr, *seg_size);
 		segments[i] = shm_fd;
     }
 
@@ -90,14 +135,16 @@ void init_shared_memory(size_t num_seg, size_t seg_size, int *segments) {
 void close_shared_memory(size_t num_seg, int* segments) {
 	for (size_t i = 0; i < num_seg; ++i) {
 		close(segments[i]);
+        char shm_name[256];
+        // Generate a unique name for each segment
+        snprintf(shm_name, sizeof(shm_name), SHARED_MEMORY"%zu", i);
+		shm_unlink(shm_name);
 	}
 }
 
 
 void start_compressing(size_t num_seg, size_t seg_size, int *segments){
 	for (size_t i = 0; i < num_seg; ++i) {
-		char shm_name[256];
-		//
 		// Map the shared memory object
 		void* addr = mmap(NULL, seg_size, PROT_READ, MAP_SHARED, segments[i], 0);
 		if (addr == MAP_FAILED) {
@@ -169,7 +216,7 @@ int main(int argc, char *argv[]) {
     parse_args(argc, argv, &n_sms, &sms_size);
 
 	int segments[n_sms];
-	init_shared_memory(n_sms, sms_size, segments);
+	init_shared_memory(n_sms, &sms_size, segments);
 
     mqd_t main_mq; 
     struct mq_attr attr;
