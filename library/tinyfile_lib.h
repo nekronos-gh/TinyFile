@@ -6,20 +6,30 @@
 #define TINY_FILE_QUEUE "/tinyservice"
 
 #define HELLO 0x00
-#define COMPRESS_START 0x01
+#define COMPRESS_REQUEST 0x01
 typedef struct message_main {
     unsigned int type;
 	unsigned int content;
 } message_main_t;
 
 
-#define CHUNKS  0x00
-#define WRITE_OK  0x01
+#define COMPRESS_START 0x00
 typedef struct message_compress {
     unsigned int type;
-	unsigned int content1;
-    unsigned int content2;
+	unsigned int chunks;
+    unsigned int size;
 } message_compress_t;
+
+#define EMPTY 0x00
+#define RAW 0x01
+#define COMPRESSED 0x02
+typedef struct chunk_meta {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    unsigned int status;
+    unsigned int size;
+    // Buffer for chunk
+} chunk_meta_t;
 
 int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out);
 int init_communication(mqd_t *my_queue, mqd_t *tf_queue);

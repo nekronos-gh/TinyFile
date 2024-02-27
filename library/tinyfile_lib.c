@@ -5,6 +5,7 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/mman.h>
 
 #include "tinyfile_lib.h"
@@ -95,74 +96,146 @@ long get_file_size(FILE *file) {
     return size;
 }
 
-void flood_chunk(const char* chunk_id, size_t size) {
-    int fd = shm_open(chunk_id, O_RDWR, 0666);
-    if (fd == -1) {
-        perror("shm_open");
-        return;
-    }
+/// Map all shared memory chunks
+/// Initialize mutexes and conditionals
+void init_shared_memory(chunk_meta_t** chunks, int n_chunks, int size) {
+    for (int i = 0; i < n_chunks; i++) {
+        char shm_name[256];
+        snprintf(shm_name, sizeof(shm_name), "/tf_mem%d", i);
 
-    if (ftruncate(fd, size) == -1) {
-        perror("ftruncate");
+        // Open the shared memory object
+        int fd = shm_open(shm_name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+        if (fd == -1) {
+            perror("shm_open");
+            exit(EXIT_FAILURE);
+        }
+
+        // Size = metadata + data size
+        size_t total_size = sizeof(chunk_meta_t) + size;
+
+        // Resize the shared memory
+        if (ftruncate(fd, total_size) == -1) {
+            perror("ftruncate");
+            exit(EXIT_FAILURE);
+        }
+
+        // Map the shared memory object
+        void* addr = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (addr == MAP_FAILED) {
+            perror("mmap");
+            exit(EXIT_FAILURE);
+        }
+
+        // Save pointer
+        chunks[i] = (chunk_meta_t*)addr;
+        pthread_mutexattr_t mutex_attr;
+        pthread_condattr_t cond_attr;
+        
+        // Init mutex
+        pthread_mutexattr_init(&mutex_attr);
+        pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+        pthread_mutex_init(&chunks[i]->mutex, &mutex_attr);
+
+        // Init cond
+        pthread_condattr_init(&cond_attr);
+        pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
+        pthread_cond_init(&chunks[i]->cond, &cond_attr);
+
+        // Clean up
+        pthread_mutexattr_destroy(&mutex_attr);
+        pthread_condattr_destroy(&cond_attr);
         close(fd);
-        return;
     }
-
-    unsigned char* data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (data == MAP_FAILED) {
-        perror("mmap");
-        close(fd);
-        return;
-    }
-
-    for (size_t i = 0; i < size; ++i) {
-        data[i] = 0x46;
-    }
-
-    munmap(data, size);
-    close(fd);
 }
 
-int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out){
+/// Ring buffer communication with service
+/// Write/read until receive whole compressed file
+int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int chunk_data_size) {
+    
+    // Init mem
+    chunk_meta_t* chunks[n_chunks];
+    init_shared_memory(chunks, n_chunks, chunk_data_size);
 
+    // Get message size
+    // XXX: can be computed once and passed as argument
+    long file_size = get_file_size(file_in);
+
+    // Loops required
+    int loops = (file_size / chunk_data_size) + (file_size % chunk_data_size != 0);
+
+    for (int i=0; i<loops; ++i) {
+        int idx = i % n_chunks;
+
+        // Lock mutex
+        pthread_mutex_lock(&(chunks[idx]->mutex));
+
+        // Wait until the chunk has compressed bytes or is empty
+        while (chunks[idx]->status == RAW) {
+            pthread_cond_wait(&(chunks[idx]->cond), &(chunks[idx]->mutex));
+        }
+
+        // If compressed content, read before writing
+        if (chunks[idx]->status == COMPRESSED) {
+            // TODO: read compressed
+            // compressed bytes chunks[idx]->size
+            // write to file_out
+        }
+        // TODO: write raw bytes
+
+        // Update metadata
+        // chunks[idx]->size = bytes written
+        chunks[idx]->status = RAW;
+        
+        pthread_cond_signal(&(chunks[idx]->cond));
+        pthread_mutex_unlock(&(chunks[idx]->mutex));
+    }
+
+    // TODO: write file
+    return 0;
+}
+int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out){
+    
+    // Open file to compress
 	FILE *file_in = fopen(path_in, "rb");
 	if (!file_in) {
 		perror("Could not open input file");
 		return -1;
 	}
+    // Check that path out
+    FILE *file_out = fopen(path_out, "wb");
+    if (!file_out) {
+        perror("Could not open output file");
+        return -1; 
+    }
 
+    // Messages for main and individual mesq
 	message_main_t message_main;
-	
+	message_compress_t message_compress;
+
 	printf("Now sending start message\n");
-    // Create a Start Compressing message
-	message_main.type = COMPRESS_START;
+    // Send START message
+	message_main.type = COMPRESS_REQUEST;
 	message_main.content = getpid();
+    // XXX: include file size?
     if (mq_send(tf_queue, (char *) &message_main, sizeof(message_main), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
 
-	// Wait for free section message in queue
-	message_compress_t message_compress;
+	// Wait for response in individual mesq
 	if (mq_receive(my_queue, (char *) &message_compress,  sizeof(message_compress), NULL) == -1){
         perror("mq_receive");
 		return -1;
 	}
-
-    // Flood chunks
-    char chunk_id[256];
-    unsigned int size = message_compress.content2;
-    for (int i=0; i<message_compress.content1; i++) {
-        snprintf(chunk_id, 10, "/tf_mem%d", i);
-        flood_chunk(chunk_id, size);
+    unsigned int n_chunks = message_compress.chunks;
+    unsigned int size = message_compress.size;
+    if (message_compress.type == COMPRESS_START) {
+        if (get_compressed_file(file_in, file_out, n_chunks, size) < 0) {
+            // TODO: error handling
+        }
     }
-
-	printf("Now getting compressed result\n");
-    // Send message done flodding
-    message_compress.type = WRITE_OK;
-    if (mq_send(my_queue, (char *) &message_compress, sizeof(message_compress), 0) == -1) {
-        perror("mq_send");
-        return -1;
+    else {
+        // TODO: logging
     }
 
     /*
