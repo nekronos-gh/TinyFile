@@ -105,64 +105,10 @@ long get_file_size(FILE *file) {
     return size;
 }
 
-/// Map all shared memory chunks
-/// Initialize mutexes and conditionals
-void init_shared_memory(void** chunks, int n_chunks, int chunk_data_size) {
-
-    for (int i = 0; i < n_chunks; i++) {
-        char shm_name[256];
-        snprintf(shm_name, sizeof(shm_name), "/tf_mem%d", i);
-
-        int fd = shm_open(shm_name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-        if (fd == -1) {
-            perror("shm_open");
-            exit(EXIT_FAILURE);
-        }
-
-        size_t total_size = META_DATA_SIZE + chunk_data_size;
-        if (ftruncate(fd, total_size) == -1) {
-            perror("ftruncate");
-            exit(EXIT_FAILURE);
-        }
-
-        void* addr = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (addr == MAP_FAILED) {
-            perror("mmap");
-            exit(EXIT_FAILURE);
-        }
-
-        // Direct casting to individual components
-        pthread_mutex_t* mutex = (pthread_mutex_t*)addr;
-        pthread_cond_t* cond = (pthread_cond_t*)((char*)addr + COND_OFFSET);
-
-        // Init mutex and cond
-        pthread_mutexattr_t mutex_attr;
-        pthread_condattr_t cond_attr;
-
-        pthread_mutexattr_init(&mutex_attr);
-        pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
-        pthread_mutex_init(mutex, &mutex_attr);
-
-        pthread_condattr_init(&cond_attr);
-        pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
-        pthread_cond_init(cond, &cond_attr);
-
-        pthread_mutexattr_destroy(&mutex_attr);
-        pthread_condattr_destroy(&cond_attr);
-
-        chunks[i] = addr;
-        close(fd);
-    }
-}
-
 /// Ring buffer communication with service
 /// Write/read until receive whole compressed file
 int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int chunk_data_size) {
     
-    // Init mem
-    void* chunks[n_chunks];
-    init_shared_memory(chunks, n_chunks, chunk_data_size);
-
     // Get message size
     // XXX: can be computed once and passed as argument
     long file_size = get_file_size(file_in);
@@ -170,7 +116,30 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int chunk_d
     int done_copying_raw = 0;
     while (1) {
         int idx = i % n_chunks;
-        void* chunk_ptr = chunks[idx];
+
+		char shm_name[256];
+		snprintf(shm_name, sizeof(shm_name), "/tf_mem%d", i);
+
+		int fd = shm_open(shm_name, O_RDWR, S_IRUSR | S_IWUSR);
+		if (fd == -1) {
+			perror("shm_open");
+			exit(EXIT_FAILURE);
+		}
+
+		size_t total_size = META_DATA_SIZE + chunk_data_size;
+		if (ftruncate(fd, total_size) == -1) {
+			perror("ftruncate");
+			exit(EXIT_FAILURE);
+		}
+
+        void* chunk_ptr = mmap(NULL, total_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+		if (chunk_ptr == MAP_FAILED) {
+			perror("mmap");
+			munmap(chunk_ptr, total_size);
+			close(fd);
+			continue; // Skip this segment and try the next
+		}
+
         pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
         pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
@@ -186,10 +155,12 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int chunk_d
         // If empty and finished copying, go to next block
         if (*status_ptr == EMPTY || done_copying_raw) {
             i++;
+			munmap(chunk_ptr, total_size);
+			close(fd);
             continue;
         }
 
-        void* data_ptr = (char*)(chunks[idx] + META_DATA_SIZE);
+        void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
 
         // If compressed, write to file out
         if (*status_ptr == COMPRESSED) {
@@ -199,8 +170,10 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int chunk_d
         if (*status_ptr == DONE) {
             // If both done, finished, SUCCESS
             if (done_copying_raw) {        
-                pthread_cond_signal(cond_ptr);
+				munmap(chunk_ptr, total_size);
+				close(fd);
                 pthread_mutex_unlock(mutex_ptr);
+                pthread_cond_signal(cond_ptr);
                 break;
             }
             else {
@@ -216,8 +189,10 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int chunk_d
             done_copying_raw = (read < chunk_data_size);
         }
         
-        pthread_cond_signal(cond_ptr);
+		munmap(chunk_ptr, total_size);
+		close(fd);
         pthread_mutex_unlock(mutex_ptr);
+        pthread_cond_signal(cond_ptr);
         i++;
     }
     
