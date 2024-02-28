@@ -35,7 +35,6 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
     // Create a Hello message
 	message.type = HELLO;
 	message.content = getpid();
-	printf("Now sending hello handshake\n");
     if (mq_send(*tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
@@ -141,18 +140,14 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
         int idx = i % n_chunks;
 		size_t total_size = META_DATA_SIZE + chunk_data_size;
 
-		if (ftruncate(chunks[idx], total_size) == -1) {
-			perror("ftruncate");
-			exit(EXIT_FAILURE);
-		}
-
+		// Map the shared memory
         void* chunk_ptr = mmap(NULL, total_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[idx], 0);
 		if (chunk_ptr == MAP_FAILED) {
 			perror("mmap");
-			munmap(chunk_ptr, total_size);
 			continue; // Skip this segment and try the next
 		}
 
+		// Get addresses
         pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
         pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
@@ -167,8 +162,10 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
         }
 
         // If empty and finished copying, go to next block
-        if (*status_ptr == EMPTY || done_copying_raw) {
+        if (*status_ptr == EMPTY && done_copying_raw) {
             i++;
+			pthread_mutex_unlock(mutex_ptr);
+			pthread_cond_signal(cond_ptr);
 			munmap(chunk_ptr, total_size);
             continue;
         }
@@ -183,8 +180,9 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
         if (*status_ptr == DONE) {
             // If both done, finished, SUCCESS
             if (done_copying_raw) {        
-				munmap(chunk_ptr, total_size);
                 pthread_mutex_unlock(mutex_ptr);
+				pthread_cond_signal(cond_ptr);
+				munmap(chunk_ptr, total_size);
                 break;
             }
             else {
@@ -200,8 +198,9 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
             done_copying_raw = (read < chunk_data_size);
         }
         
-		munmap(chunk_ptr, total_size);
         pthread_mutex_unlock(mutex_ptr);
+		pthread_cond_signal(cond_ptr);
+		munmap(chunk_ptr, total_size);
         i++;
     }
     
@@ -228,7 +227,6 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 	message_main_t message_main;
 	message_compress_t message_compress;
 
-	printf("Now sending start message\n");
     // Send START message
 	message_main.type = COMPRESS_REQUEST;
 	message_main.content = getpid();
@@ -245,6 +243,7 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 	}
     unsigned int n_chunks = message_compress.chunks;
     unsigned int size = message_compress.size;
+
 	int* chunks = open_shared_memory(n_chunks);
     if (get_compressed_file(file_in, file_out, n_chunks, chunks, size) < 0) {
         // TODO: error handling

@@ -21,6 +21,12 @@
 #define WRITE_OK 1
 #define COMPRESS_OK 2
 
+#define MUTEX_SIZE sizeof(pthread_mutex_t)
+#define COND_SIZE  sizeof(pthread_cond_t)
+#define UINT_SIZE  sizeof(unsigned int)
+
+
+
 typedef struct msgbuf {
     long mtype;
     char mtext[MAX_MSG_SIZE];
@@ -96,20 +102,17 @@ void init_shared_memory(size_t num_seg, size_t *seg_size, int *segments) {
 		init_mutex_cond(&new_cond);
 		unsigned int state = CLEAR;
 		unsigned int data_size = 0;
-		size_t mutex_size = sizeof(new_mutex);
-		size_t cond_size = sizeof(new_cond);
-		size_t uint_size = sizeof(state);
 
         // Set the size of the shared memory object
-		*seg_size += mutex_size + cond_size + 2 * uint_size;
-        if (ftruncate(shm_fd, *seg_size) == -1) {
+		int total_seg_size = *seg_size + MUTEX_SIZE + COND_SIZE + 2 * UINT_SIZE;
+        if (ftruncate(shm_fd, total_seg_size) == -1) {
             perror("ftruncate");
             close(shm_fd);
             exit(EXIT_FAILURE);
         }
 
 		// Write the setup into shared memory
-		void* addr = mmap(NULL, *seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, shm_fd, 0);
+		void* addr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, shm_fd, 0);
 		if (addr == MAP_FAILED) {
 			perror("mmap");
 			continue; // Skip this segment and try the next
@@ -118,15 +121,15 @@ void init_shared_memory(size_t num_seg, size_t *seg_size, int *segments) {
 		// Calculate offsets
 		size_t offset = 0;
 		// Copy the data objects into shared memory at the correct offset
-		memcpy((char*)addr + offset, &new_mutex, mutex_size);
-		offset += mutex_size;
-		memcpy((char*)addr + offset, &new_cond, cond_size);
-		offset += cond_size;
-		memcpy((char*)addr + offset, &state, uint_size);
-		offset += uint_size;
-		memcpy((char*)addr + offset, &data_size, uint_size);
+		memcpy((char*)addr + offset, &new_mutex, MUTEX_SIZE);
+		offset += MUTEX_SIZE;
+		memcpy((char*)addr + offset, &new_cond, COND_SIZE);
+		offset += COND_SIZE;
+		memcpy((char*)addr + offset, &state, UINT_SIZE);
+		offset += UINT_SIZE;
+		memcpy((char*)addr + offset, &data_size, UINT_SIZE);
 
-		munmap(addr, *seg_size);
+		munmap(addr, total_seg_size);
 		segments[i] = shm_fd;
     }
 
@@ -143,21 +146,54 @@ void close_shared_memory(size_t num_seg, int* segments) {
 }
 
 
+void print_memory(const void* ptr, size_t size) {
+    const unsigned char* byte = (const unsigned char*) ptr;
+    for (size_t i = 0; i < size; i++) {
+        printf("%02x ", byte[i]);
+        if ((i + 1) % 16 == 0) // Optional: line break every 16 bytes
+            printf("\n");
+    }
+    printf("\n");
+}
+
 void start_compressing(size_t num_seg, size_t seg_size, int *segments){
 	for (size_t i = 0; i < num_seg; ++i) {
 		// Map the shared memory object
-		void* addr = mmap(NULL, seg_size, PROT_READ, MAP_SHARED, segments[i], 0);
-		if (addr == MAP_FAILED) {
+		int total_seg_size = seg_size + MUTEX_SIZE + COND_SIZE + 2 * UINT_SIZE;
+		void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, segments[i], 0);
+		if (chunk_ptr == MAP_FAILED) {
 			perror("mmap");
 			continue; // Skip this segment and try the next
 		}
 
 		// Read data from the shared memory object
 		// For example purposes, just printing the first byte
-		printf("Segment %zu, first byte: %c\n", i, *((char*)addr));
+
+		// Get the syncronization variables
+		size_t offset = 0;
+        pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr + offset);
+		offset += MUTEX_SIZE;
+        pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + offset);
+		offset += COND_SIZE;
+        unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + offset);
+		offset += UINT_SIZE;
+        unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + offset);
+		offset += UINT_SIZE;
+
+		pthread_mutex_lock(mutex_ptr);
+
+        while (*status_ptr == CLEAR) {
+            pthread_cond_wait(cond_ptr, mutex_ptr);
+        }
+
+
+		// Now chunk_pointer points to the data
+		printf("Some random mf just wrote in segment %ld:\n", i);
+		print_memory(chunk_ptr + offset, *size_ptr);
 
 		// Unmap the shared memory object
-		munmap(addr, seg_size);
+		pthread_mutex_unlock(mutex_ptr);
+		munmap(chunk_ptr, total_seg_size);
 	}
 }
 
@@ -247,7 +283,6 @@ int main(int argc, char *argv[]) {
             perror("mq_receive");
             exit(EXIT_FAILURE);
         }
-		printf("Recieved MESSAGE (%d) from %d\n", buffer.type, buffer.content);
 
 		// XXX: This shoud be refactored in neatly functions
 		switch(buffer.type){
@@ -260,7 +295,8 @@ int main(int argc, char *argv[]) {
             handle_compress(buffer.content, n_sms, sms_size, segments);
 			break;
 		default:
-			printf("Message %d not understood\n", buffer.type);
+			fprintf(stderr, "Message %d not understood\n", buffer.type);
+            exit(EXIT_FAILURE);
 		}
     }
     
