@@ -6,6 +6,8 @@
 #define CLEAR 0x00
 #define WRITTEN 0x01
 #define COMPRESSED 0x02
+#define DONE_LIB 0x03
+#define DONE_SER 0x04
 
 #define TINY_FILE_QUEUE "/tinyservice"
 #define SHARED_MEMORY "/tf_mem"

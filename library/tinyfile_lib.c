@@ -127,16 +127,64 @@ void close_shared_memory(int n_chunks, int* fd_array){
 	free(fd_array);
 }
 
-/// Ring buffer communication with service
-/// Write/read until receive whole compressed file
-int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size) {
-    
-    // Get message size
-    // XXX: can be computed once and passed as argument
-    long file_size = get_file_size(file_in);
-    int i = 0;
-    int done_copying_raw = 0;
-    while (1) {
+void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, int file_size){
+	int i = 0;
+	int done = 0;
+	while (!done) {
+		int idx = i % n_chunks;
+		size_t total_size = META_DATA_SIZE + chunk_data_size;
+
+		// Map the shared memory
+		void* chunk_ptr = mmap(NULL, total_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[idx], 0);
+		if (chunk_ptr == MAP_FAILED) {
+			perror("mmap");
+			continue; // Skip this segment and try the next
+		}
+		// Get addresses
+		pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
+		pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
+		unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
+		unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + SIZE_OFFSET);
+        void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
+
+		// Lock mutex
+		pthread_mutex_lock(mutex_ptr);
+
+		// Wait until compressed or empty 
+		while (*status_ptr == RAW) {
+			pthread_cond_wait(cond_ptr, mutex_ptr);
+		}
+		// If compressed read chunk into ouput file
+		// Else if not empy error
+		if (*status_ptr == COMPRESSED){
+			fwrite(data_ptr, 1, *size_ptr, file_out);
+		} else if (*status_ptr != EMPTY){
+			pthread_mutex_unlock(mutex_ptr);
+			pthread_cond_signal(cond_ptr);
+			munmap(chunk_ptr, total_size);
+			exit(EXIT_FAILURE);
+		}
+
+		// IF compressed or empy, write data into chunk
+		size_t read = fread(data_ptr, 1, chunk_data_size, file_in);
+		*size_ptr = read;
+		if (read < chunk_data_size) {
+			*status_ptr = DONE_LIB;
+			done = 1;
+		} else {
+			*status_ptr = RAW;
+		}
+		pthread_mutex_unlock(mutex_ptr);
+		pthread_cond_signal(cond_ptr);
+		munmap(chunk_ptr, total_size);
+		i++;
+	}
+}
+
+void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, int file_size){
+	int i = 0;
+	int done = 0;
+    while (!done) {
         int idx = i % n_chunks;
 		size_t total_size = META_DATA_SIZE + chunk_data_size;
 
@@ -152,60 +200,41 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
         pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
         unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + SIZE_OFFSET);
+        void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
 
         // Lock mutex
         pthread_mutex_lock(mutex_ptr);
 
         // Wait until compressed or empty 
-        while (*status_ptr == RAW) {
+        while (*status_ptr == RAW || *status_ptr == DONE_LIB) {
             pthread_cond_wait(cond_ptr, mutex_ptr);
         }
 
-        // If empty and finished copying, go to next block
-        if (*status_ptr == EMPTY && done_copying_raw) {
-            i++;
-			pthread_mutex_unlock(mutex_ptr);
-			pthread_cond_signal(cond_ptr);
-			munmap(chunk_ptr, total_size);
-            continue;
-        }
+		if (*status_ptr != EMPTY) {
+			fwrite(data_ptr, 1, *size_ptr, file_out);
+		}
 
-        void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
-
-        // If compressed, write to file out
-        if (*status_ptr == COMPRESSED) {
-            fwrite(data_ptr, 1, *size_ptr, file_out);
-        }
-
-        if (*status_ptr == DONE) {
-            // If both done, finished, SUCCESS
-            if (done_copying_raw) {        
-                pthread_mutex_unlock(mutex_ptr);
-				pthread_cond_signal(cond_ptr);
-				munmap(chunk_ptr, total_size);
-                break;
-            }
-            else {
-                // XXX: should never be here
-            }
-        }
-        
-        // If not done copying and not RAW, write RAW
-        if (!done_copying_raw) {
-            size_t read = fread(data_ptr, 1, chunk_data_size, file_in);
-            *size_ptr = read;
-            *status_ptr = (read < chunk_data_size) ? DONE : RAW;
-            done_copying_raw = (read < chunk_data_size);
-        }
-        
-        pthread_mutex_unlock(mutex_ptr);
+		if (*status_ptr == DONE_SER){
+			done = 1;
+		}
+		pthread_mutex_unlock(mutex_ptr);
 		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_size);
-        i++;
+		i++;
     }
+}
+
+/// Ring buffer communication with service
+/// Write/read until receive whole compressed file
+void get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size) {
     
-    fclose(file_out);
-    return 0;
+    // Get message size
+    // XXX: can be computed once and passed as argument
+    long file_size = get_file_size(file_in);
+
+	not_done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
+	done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
+    
 }
 
 int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out){
@@ -245,10 +274,10 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
     unsigned int size = message_compress.size;
 
 	int* chunks = open_shared_memory(n_chunks);
-    if (get_compressed_file(file_in, file_out, n_chunks, chunks, size) < 0) {
-        // TODO: error handling
-    }
+    get_compressed_file(file_in, file_out, n_chunks, chunks, size);
 	close_shared_memory(n_chunks, chunks);
+    fclose(file_out);
+    fclose(file_in);
 
 	return 0;
 }

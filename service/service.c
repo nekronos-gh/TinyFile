@@ -157,10 +157,13 @@ void print_memory(const void* ptr, size_t size) {
 }
 
 void start_compressing(size_t num_seg, size_t seg_size, int *segments){
-	for (size_t i = 0; i < num_seg; ++i) {
+	int i = 0;
+	int done = 0;
+	while (!done) {
+		int idx = i % num_seg;
 		// Map the shared memory object
 		int total_seg_size = seg_size + MUTEX_SIZE + COND_SIZE + 2 * UINT_SIZE;
-		void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, segments[i], 0);
+		void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, segments[idx], 0);
 		if (chunk_ptr == MAP_FAILED) {
 			perror("mmap");
 			continue; // Skip this segment and try the next
@@ -186,14 +189,21 @@ void start_compressing(size_t num_seg, size_t seg_size, int *segments){
             pthread_cond_wait(cond_ptr, mutex_ptr);
         }
 
-
 		// Now chunk_pointer points to the data
-		printf("Some random mf just wrote in segment %ld:\n", i);
+		printf("Some random mf just wrote in segment %d:\n", idx);
 		print_memory(chunk_ptr + offset, *size_ptr);
+
+		if (*status_ptr == DONE_LIB){
+			done = 1;
+		}
+
+		*status_ptr = COMPRESSED;
 
 		// Unmap the shared memory object
 		pthread_mutex_unlock(mutex_ptr);
+		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_seg_size);
+		i++;
 	}
 }
 

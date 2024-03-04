@@ -23,7 +23,8 @@ typedef struct message_compress {
 #define EMPTY 0x00
 #define RAW 0x01
 #define COMPRESSED 0x02
-#define DONE 0x03
+#define DONE_LIB 0x03
+#define DONE_SER 0x04
 
 int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out);
 int init_communication(mqd_t *my_queue, mqd_t *tf_queue);
