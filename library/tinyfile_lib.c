@@ -15,25 +15,28 @@ const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
 const unsigned int COND_SIZE = sizeof(pthread_cond_t);
 const unsigned int INFO_SIZE = sizeof(unsigned int); 
 const unsigned int META_DATA_SIZE = MUTEX_SIZE + COND_SIZE + 2 * INFO_SIZE;
-const unsigned int MUTEX_OFFSET = 0;
-const unsigned int COND_OFFSET = MUTEX_SIZE;
-const unsigned int STATUS_OFFSET = MUTEX_SIZE + COND_SIZE;
-const unsigned int SIZE_OFFSET = STATUS_OFFSET + INFO_SIZE;
+
+const unsigned int MUTEX_OFFSET     = 0;
+const unsigned int COND_OFFSET      = MUTEX_SIZE;
+const unsigned int STATUS_OFFSET    = MUTEX_SIZE    + COND_SIZE;
+const unsigned int SIZE_OFFSET      = STATUS_OFFSET + INFO_SIZE;
+
 
 
 // Start the communication with the Daemon
 int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
+    printf("* Init communication START\n");
 	message_main_t message;
 
 	// Open Deamon queue
 	*tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
     if (*tf_queue == (mqd_t)-1) {
-        perror("mq_open");
+        perror("Opening main mesq");
 		return -1;
     }
-
+    printf("---> %d\n", *tf_queue);
     // Create a Hello message
-	message.type = HELLO;
+	message.type = INIT;
 	message.content = getpid();
     if (mq_send(*tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
@@ -59,12 +62,23 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
 		return -1;
     }
 
+    printf("* Init communication END\n");
 	return 0;
 }
 
 int close_communication(mqd_t my_queue, mqd_t tf_queue){
 
-	// Close daemon queue
+    printf("* Close communication START\n");
+    // Send close message
+	message_main_t message;
+	message.type = CLOSE;
+	message.content = getpid();
+    if (mq_send(tf_queue, (char *) &message, sizeof(message), 0) == -1) {
+        perror("mq_send");
+		return -1;
+    }
+    
+    // Close daemon queue
 	if (mq_close(tf_queue) == -1) {
         perror("mq_close");
 		return -1;
@@ -83,6 +97,8 @@ int close_communication(mqd_t my_queue, mqd_t tf_queue){
         perror("mq_unlink");
 		return -1;
     }
+
+    printf("* Close communication END\n");
 	return 0;
 }
 
@@ -231,7 +247,6 @@ void get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunk
     // Get message size
     // XXX: can be computed once and passed as argument
     long file_size = get_file_size(file_in);
-
 	not_done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
 	done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
     
@@ -257,14 +272,13 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 	message_compress_t message_compress;
 
     // Send START message
-	message_main.type = COMPRESS_REQUEST;
+	message_main.type = REQUEST;
 	message_main.content = getpid();
     // XXX: include file size?
     if (mq_send(tf_queue, (char *) &message_main, sizeof(message_main), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
-
 	// Wait for response in individual mesq
 	if (mq_receive(my_queue, (char *) &message_compress,  sizeof(message_compress), NULL) == -1){
         perror("mq_receive");

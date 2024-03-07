@@ -14,16 +14,15 @@
 
 #define MAX_MSG_SIZE 1024
 
-#define INIT 0
-#define REQUEST 1
+const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
+const unsigned int COND_SIZE = sizeof(pthread_cond_t);
+const unsigned int INFO_SIZE = sizeof(unsigned int); 
+const unsigned int META_DATA_SIZE = MUTEX_SIZE + COND_SIZE + 2 * INFO_SIZE;
 
-#define SECTION 0
-#define WRITE_OK 1
-#define COMPRESS_OK 2
-
-#define MUTEX_SIZE sizeof(pthread_mutex_t)
-#define COND_SIZE  sizeof(pthread_cond_t)
-#define UINT_SIZE  sizeof(unsigned int)
+const unsigned int MUTEX_OFFSET = 0;
+const unsigned int COND_OFFSET = MUTEX_SIZE;
+const unsigned int STATUS_OFFSET = MUTEX_SIZE + COND_SIZE;
+const unsigned int SIZE_OFFSET = STATUS_OFFSET + INFO_SIZE;
 
 
 
@@ -44,7 +43,7 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
     // Parse the options
 	// Default values
 	*n_sms = 5;
-	*sms_size = 4096;
+	*sms_size = 10;
     while ((opt = getopt_long(argc, argv, "n:s:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'n':
@@ -100,11 +99,11 @@ void init_shared_memory(size_t num_seg, size_t *seg_size, int *segments) {
 		init_mutex(&new_mutex);
 		pthread_cond_t new_cond;
 		init_mutex_cond(&new_cond);
-		unsigned int state = CLEAR;
+		unsigned int state = EMPTY;
 		unsigned int data_size = 0;
 
         // Set the size of the shared memory object
-		int total_seg_size = *seg_size + MUTEX_SIZE + COND_SIZE + 2 * UINT_SIZE;
+		int total_seg_size = *seg_size + META_DATA_SIZE; 
         if (ftruncate(shm_fd, total_seg_size) == -1) {
             perror("ftruncate");
             close(shm_fd);
@@ -118,16 +117,10 @@ void init_shared_memory(size_t num_seg, size_t *seg_size, int *segments) {
 			continue; // Skip this segment and try the next
 		}
 
-		// Calculate offsets
-		size_t offset = 0;
-		// Copy the data objects into shared memory at the correct offset
-		memcpy((char*)addr + offset, &new_mutex, MUTEX_SIZE);
-		offset += MUTEX_SIZE;
-		memcpy((char*)addr + offset, &new_cond, COND_SIZE);
-		offset += COND_SIZE;
-		memcpy((char*)addr + offset, &state, UINT_SIZE);
-		offset += UINT_SIZE;
-		memcpy((char*)addr + offset, &data_size, UINT_SIZE);
+		memcpy((char*)addr,                 &new_mutex, MUTEX_SIZE);
+		memcpy((char*)addr + COND_OFFSET,   &new_cond,  COND_SIZE);
+		memcpy((char*)addr + STATUS_OFFSET, &state,     INFO_SIZE);
+		memcpy((char*)addr + SIZE_OFFSET,   &data_size, INFO_SIZE);
 
 		munmap(addr, total_seg_size);
 		segments[i] = shm_fd;
@@ -162,36 +155,28 @@ void start_compressing(size_t num_seg, size_t seg_size, int *segments){
 	while (!done) {
 		int idx = i % num_seg;
 		// Map the shared memory object
-		int total_seg_size = seg_size + MUTEX_SIZE + COND_SIZE + 2 * UINT_SIZE;
+		int total_seg_size = seg_size + META_DATA_SIZE;
 		void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, segments[idx], 0);
 		if (chunk_ptr == MAP_FAILED) {
 			perror("mmap");
-			continue; // Skip this segment and try the next
-		}
+            // Skip this segment and try the next
+			continue; 
+        }
 
-		// Read data from the shared memory object
-		// For example purposes, just printing the first byte
-
-		// Get the syncronization variables
-		size_t offset = 0;
-        pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr + offset);
-		offset += MUTEX_SIZE;
-        pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + offset);
-		offset += COND_SIZE;
-        unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + offset);
-		offset += UINT_SIZE;
-        unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + offset);
-		offset += UINT_SIZE;
+        // Get the syncronization variables
+		pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
+		pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
+		unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
+		unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + SIZE_OFFSET);
 
 		pthread_mutex_lock(mutex_ptr);
 
-        while (*status_ptr == CLEAR) {
+        while (*status_ptr == EMPTY) {
             pthread_cond_wait(cond_ptr, mutex_ptr);
         }
 
 		// Now chunk_pointer points to the data
-		printf("Some random mf just wrote in segment %d:\n", idx);
-		print_memory(chunk_ptr + offset, *size_ptr);
+		print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
 
 		if (*status_ptr == DONE_LIB){
 			done = 1;
@@ -215,7 +200,7 @@ void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *seg
     key_t key;
 
 
-    // Send memory key on individual compress q
+    // Send memory info on individual mesq
     mqd_t compress_mq;
     struct mq_attr attr;
     attr.mq_flags = 0; 
@@ -233,7 +218,7 @@ void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *seg
     
 	// Write information about chunks to process
     message_compress_t buffer;
-    buffer.type = SECTION;
+    buffer.type = MEMORY_INFO;
     buffer.chunks = num_seg;
 	buffer.size = seg_size;
     if (mq_send(compress_mq, (char *) &buffer, sizeof(message_compress_t), 0) == -1) {
@@ -241,16 +226,17 @@ void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *seg
         exit(EXIT_FAILURE);
     }
 
-    // TODO:
-    // - Compress file
+    // Compress file
 	start_compressing(num_seg, seg_size, segments);
 
+    /* No need to send response
     // Send finished response
     buffer.type = COMPRESS_OK;
     if (mq_send(compress_mq, (char *) &buffer, sizeof(message_compress_t), 0) == -1) {
         perror("mq_send");
         exit(EXIT_FAILURE);
     }
+    */
 
 }
 
@@ -268,7 +254,6 @@ int main(int argc, char *argv[]) {
     struct mq_attr attr;
 
     attr.mq_flags = 0; 
-    // XXX: choose max size
     attr.mq_maxmsg = 10;  // System max limit in: /proc/sys/fs/mqueue/msg_max
     attr.mq_msgsize = sizeof(message_main_t); 
     attr.mq_curmsgs = 0; 
@@ -285,6 +270,7 @@ int main(int argc, char *argv[]) {
 
     ssize_t bytes_read;
     message_main_t buffer;
+    printf("Receiving messages: %d\n", main_mq);
     while (1) {
 
         // Read main buffer
@@ -293,17 +279,26 @@ int main(int argc, char *argv[]) {
             perror("mq_receive");
             exit(EXIT_FAILURE);
         }
-
-		// XXX: This shoud be refactored in neatly functions
+        printf("Got something?");
+		
+        // XXX: This shoud be refactored in neatly functions
 		switch(buffer.type){
-		 case INIT:
+        case INIT:
+            printf("Received INIT: %d", buffer.content);
             if (!add_to_llist(&head, buffer.content)) {
                 // XXX: handle errors?
             } 
 			break;
+
 		case REQUEST:
             handle_compress(buffer.content, n_sms, sms_size, segments);
 			break;
+
+        case CLOSE: 
+            // TODO: remove from linked list
+            printf("Received CLOSE: %d", buffer.content);
+            break;
+
 		default:
 			fprintf(stderr, "Message %d not understood\n", buffer.type);
             exit(EXIT_FAILURE);

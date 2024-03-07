@@ -3,27 +3,38 @@
 
 #include <stdlib.h>
 
-#define CLEAR 0x00
-#define WRITTEN 0x01
-#define COMPRESSED 0x02
-#define DONE_LIB 0x03
-#define DONE_SER 0x04
 
 #define TINY_FILE_QUEUE "/tinyservice"
 #define SHARED_MEMORY "/tf_mem"
 
+#define INIT 0x00
+#define REQUEST 0x01
+#define CLOSE 0x02
 typedef struct message_main {
     unsigned int type;
-    unsigned int content;
-} message_main_t ;
+	unsigned int content;
+} message_main_t;
 
+
+#define MEMORY_INFO 0x00
+#define LIB_DONE 0x01
 typedef struct message_compress {
     unsigned int type;
     unsigned int chunks;
     unsigned int size;
 } message_compress_t;
 
-    typedef struct node node_t;
+
+
+#define EMPTY 0x00
+#define RAW 0x01
+#define COMPRESSED 0x02
+#define DONE_LIB 0x03
+#define DONE_SER 0x04
+
+
+
+typedef struct node node_t;
 typedef struct node {
     node_t* next;
     unsigned int pid;
