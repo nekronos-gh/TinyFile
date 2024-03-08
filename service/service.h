@@ -17,13 +17,12 @@ typedef struct message_main {
 
 
 #define MEMORY_INFO 0x00
-#define LIB_DONE 0x01
+#define LIB_FINISHED 0x01
 typedef struct message_compress {
     unsigned int type;
-    unsigned int chunks;
+	unsigned int chunks;
     unsigned int size;
 } message_compress_t;
-
 
 
 #define EMPTY 0x00
@@ -31,7 +30,6 @@ typedef struct message_compress {
 #define COMPRESSED 0x02
 #define DONE_LIB 0x03
 #define DONE_SER 0x04
-
 
 
 typedef struct node node_t;

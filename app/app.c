@@ -6,8 +6,8 @@
 int main() {
 
 	mqd_t my_queue, tf_queue;
-    init_communication(&my_queue, &tf_queue);
-	//compress_file(&my_queue, &tf_queue, "sloppy.txt", "sloppy.gov");
+	init_communication(&my_queue, &tf_queue);
+	compress_file(my_queue, tf_queue, "sloppy.txt", "sloppy.gov");
 	close_communication(my_queue, tf_queue);
     return 0;
 }

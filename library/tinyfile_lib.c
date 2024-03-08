@@ -11,6 +11,7 @@
 #include "tinyfile_lib.h"
 
 #define MAX_MSG_SIZE 1024
+#define DEBUG 1
 const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
 const unsigned int COND_SIZE = sizeof(pthread_cond_t);
 const unsigned int INFO_SIZE = sizeof(unsigned int); 
@@ -27,7 +28,7 @@ const unsigned int SIZE_OFFSET      = STATUS_OFFSET + INFO_SIZE;
 int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
     printf("* Init communication START\n");
 	message_main_t message;
-
+    if (DEBUG) printf("* INIT start\n");
 	// Open Deamon queue
 	*tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
     if (*tf_queue == (mqd_t)-1) {
@@ -62,23 +63,21 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
 		return -1;
     }
 
-    printf("* Init communication END\n");
+    if (DEBUG) printf("* INIT end\n");
 	return 0;
 }
 
 int close_communication(mqd_t my_queue, mqd_t tf_queue){
 
-    printf("* Close communication START\n");
-    // Send close message
-	message_main_t message;
+    if (DEBUG) printf("* CLOSE start\n");
+
+    message_main_t message;
 	message.type = CLOSE;
 	message.content = getpid();
     if (mq_send(tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
-    
-    // Close daemon queue
 	if (mq_close(tf_queue) == -1) {
         perror("mq_close");
 		return -1;
@@ -97,8 +96,7 @@ int close_communication(mqd_t my_queue, mqd_t tf_queue){
         perror("mq_unlink");
 		return -1;
     }
-
-    printf("* Close communication END\n");
+    if (DEBUG) printf("* CLOSE end\n");
 	return 0;
 }
 
@@ -143,8 +141,11 @@ void close_shared_memory(int n_chunks, int* fd_array){
 	free(fd_array);
 }
 
-void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, int file_size){
-	int i = 0;
+void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, long file_size){
+     
+    if (DEBUG) printf("* GET COMP start\n");
+	
+    int i = 0;
 	int done = 0;
 	while (!done) {
 		int idx = i % n_chunks;
@@ -154,7 +155,7 @@ void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chu
 		void* chunk_ptr = mmap(NULL, total_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[idx], 0);
 		if (chunk_ptr == MAP_FAILED) {
 			perror("mmap");
-			continue; // Skip this segment and try the next
+            break;
 		}
 		// Get addresses
 		pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
@@ -168,8 +169,10 @@ void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chu
 
 		// Wait until compressed or empty 
 		while (*status_ptr == RAW) {
+            if (DEBUG) printf("In mutex (i=%d)(status=%d)\n", idx, *status_ptr);
 			pthread_cond_wait(cond_ptr, mutex_ptr);
 		}
+        printf("status: %d\n", *status_ptr);
 		// If compressed read chunk into ouput file
 		// Else if not empy error
 		if (*status_ptr == COMPRESSED){
@@ -242,7 +245,7 @@ void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks,
 
 /// Ring buffer communication with service
 /// Write/read until receive whole compressed file
-void get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size) {
+int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size) {
     
     // Get message size
     // XXX: can be computed once and passed as argument
@@ -288,7 +291,15 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
     unsigned int size = message_compress.size;
 
 	int* chunks = open_shared_memory(n_chunks);
-    get_compressed_file(file_in, file_out, n_chunks, chunks, size);
+    if (get_compressed_file(file_in, file_out, n_chunks, chunks, size) < 0) {
+        // TODO: error handling
+    }
+    
+    message_compress.type = LIB_FINISHED;
+    if (mq_send(my_queue, (char *) &message_compress, sizeof(message_compress), 0) == -1) {
+        perror("mq_send");
+		return -1;
+    }
 	close_shared_memory(n_chunks, chunks);
     fclose(file_out);
     fclose(file_in);

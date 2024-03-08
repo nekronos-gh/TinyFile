@@ -16,7 +16,7 @@ typedef struct message_main {
 
 
 #define MEMORY_INFO 0x00
-#define LIB_DONE 0x01
+#define LIB_FINISHED 0x01
 typedef struct message_compress {
     unsigned int type;
 	unsigned int chunks;
@@ -29,7 +29,6 @@ typedef struct message_compress {
 #define COMPRESSED 0x02
 #define DONE_LIB 0x03
 #define DONE_SER 0x04
-
 
 int init_communication(mqd_t *my_queue, mqd_t *tf_queue);
 int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out);
