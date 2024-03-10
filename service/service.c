@@ -162,7 +162,7 @@ void print_memory(const void* ptr, size_t size) {
     printf("\n");
 }
 
-void start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
+int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 
     int i = 0;
 	int done = 0;
@@ -187,21 +187,23 @@ void start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
         while (*status_ptr != RAW && *status_ptr != DONE_LIB) {
             pthread_cond_wait(cond_ptr, mutex_ptr);
         }
-        printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
-		// Now chunk_pointer points to the data
-		printf("Some random mf just wrote in segment %d:\n", idx);
-		print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
+        if (DEBUG) {
+            printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
+		    printf("Some random mf just wrote in segment %d:\n", idx);
+    		print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
+        }
 
         // TODO: COMPRESSE
         *status_ptr = (*status_ptr == RAW) ? COMPRESSED : DONE_SER;
         done = (*status_ptr == DONE_SER);
 		// Unmap the shared memory object
-        printf(" <- chunk: %d (%s)\n", idx, print_status(*status_ptr));
+        if (DEBUG) printf(" <- chunk: %d (%s)\n", idx, print_status(*status_ptr));
 		pthread_mutex_unlock(mutex_ptr);
 		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_seg_size);
         i++;
 	}
+    return i;
 }
 
 
@@ -221,7 +223,6 @@ void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *
 
     char queue_string[256];
     sprintf(queue_string, "/%u", pid);
-	printf("CLIENT: %s\n", queue_string);
     compress_mq = mq_open(queue_string, O_RDWR);
     if (compress_mq == (mqd_t) -1) {
         perror("mq_open");
@@ -238,7 +239,7 @@ void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *
         exit(EXIT_FAILURE);
     }
 
-	start_compressing(n_chunks, chunk_size, chunks);
+	int reps = start_compressing(n_chunks, chunk_size, chunks);
     // Wait for done response
     ssize_t bytes_read;
     bytes_read = mq_receive(compress_mq, (char *) &buffer, sizeof(message_compress_t), NULL);
@@ -262,6 +263,7 @@ void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
         *status_ptr = EMPTY;
 	}
+    if (!DEBUG) printf("* Compressed for %d DONE (%d)\n", pid, reps);
 
 }
 
@@ -311,9 +313,10 @@ int main(int argc, char *argv[]) {
 			break;
 
 		case REQUEST:
+            if (!DEBUG) printf("* Got request from %d\n", buffer.content);
             add_request(&head, buffer.content);
-            handle_compress(get_request(&head), n_chunks, chunk_size, chunks);
-            if (DEBUG) printf("* Compressed for %d DONE\n", buffer.content);
+            unsigned int responding_to = get_request(&head);
+            handle_compress(responding_to, n_chunks, chunk_size, chunks);
 			break;
 
         case CLOSE:

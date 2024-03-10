@@ -46,7 +46,7 @@
 \par At startup, the service creates the shared memory chunks given the arguments and the main message queue. Under the \texttt{'/tinyservice'} message queue library instances can push 3 type of messages:
 \begin{itemize}
     \item \textit{Init}. When the app calls \texttt{init\_communication()} a message is sent with the process identifier, with the intention of keeping track of all instances for quality of service.
-    \item \textit{Compress Request}. Every time an app wants to compress a file, this message serves as the request and it includes the size of the file and \textcolor{red}{\textbf{????}} the pid to identify the request. 
+    \item \textit{Compress Request}. Every time an app wants to compress a file, this message serves as the request and it includes the pid to identify the request. 
     \item \textit{End}. When the app calls \texttt{end\_communication()}, tells the service that this instance won't be making anymore requests.
 \end{itemize}
 
@@ -132,8 +132,11 @@ Here, for scheduling or faster compression, the service has caught up to the lib
 
 % **************************************************** QOS 
 \section*{Quality of Service}
+\par We implemented QoS in our project by prioritizing tasks based on the number of requests fulfilled, despite the alternative of designing our approach around the volume of bytes processed.
 
+\par Prioritizing clients based on request count rather than data size might not reflect the true resource consumption or prioritize critical larger requests, potentially leading to overlooked client needs. However, this approach aims to ensure equitable service access and prevent a few clients with small and frequent requests from dominating resources.
 
+\par When an app wants to use the service it must initialize communication, letting the server know there is one more thread that wants to compress files. The service keeps a linked list to keep count of how many request each process has made and if its waiting for a response. 
 
 % **************************************************** LOGS
 \section*{Logs}

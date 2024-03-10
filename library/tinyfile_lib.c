@@ -34,7 +34,7 @@ void set_path(call_status_t *status, char *path_in, char *path_out) {
 
 // Start the communication with the Daemon
 int init_communication(call_status_t *status){
-    printf("* Init communication START\n");
+    if (DEBUG) printf("* Init communication START\n");
 
 	pthread_spin_init(&status->spinlock, 0);
 
@@ -61,7 +61,6 @@ int init_communication(call_status_t *status){
 
     // Format the queue name with the prefix and PID
     sprintf(queue_name, "/%u", (unsigned int) pthread_self());
-	printf("CLIENT: %s --> %u\n", queue_name, message.content);
 
     // Set the attributes of the message queue
     struct mq_attr attr;
@@ -194,7 +193,7 @@ void close_shared_memory(int n_chunks, int* fd_array){
 
 int not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, long file_size){
      
-    if (DEBUG) printf("* NOT DONE start\n");
+    if (!DEBUG) printf("* NOT DONE start\n");
 	
     int i = 0;
 	int done = 0;
@@ -223,7 +222,7 @@ int not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chun
             if (DEBUG) printf("In mutex (i=%d)(status=%d)\n", idx, *status_ptr);
 			pthread_cond_wait(cond_ptr, mutex_ptr);
 		}
-        printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
+        if (DEBUG) printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
 		// If compressed read chunk into ouput file
 		// Else if not empy error
 		if (*status_ptr == COMPRESSED){
@@ -305,13 +304,13 @@ void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks,
 		if (*status_ptr == DONE_SER){
 			done = 1;
 		}
-        printf(" <- %s\n", print_status(*status_ptr));
+        if (DEBUG) printf(" <- %s\n", print_status(*status_ptr));
 		pthread_mutex_unlock(mutex_ptr);
 		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_size);
 		i++;
     }
-    if (DEBUG) printf("* DONE end\n");
+    if (!DEBUG) printf("* DONE end\n");
 }
 
 /// Ring buffer communication with service
@@ -413,7 +412,6 @@ void compress_file_await(call_status_t* status) {
     }
 	free(status);
 }
-
 call_status_t *compress_file_async(call_status_t *status) {
     pthread_t thread_id;
 	call_status_t * result = malloc(sizeof(call_status_t));

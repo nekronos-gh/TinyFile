@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define TINY_FILE_QUEUE "/tinyservice"
 #define SHARED_MEMORY "/tf_mem"
