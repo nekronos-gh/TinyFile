@@ -1,5 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
@@ -13,7 +11,6 @@
 #include "service.h"
 
 #define MAX_MSG_SIZE 1024
-#define DEBUG 1
 const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
 const unsigned int COND_SIZE = sizeof(pthread_cond_t);
 const unsigned int INFO_SIZE = sizeof(unsigned int); 
@@ -308,17 +305,22 @@ int main(int argc, char *argv[]) {
 		switch(buffer.type){
 		 case INIT:
             if (add_to_llist(&head, buffer.content) < 0) {
-                // XXX: handle errors?
+                // XXX: ??
             } 
 			break;
 
 		case REQUEST:
-            handle_compress(buffer.content, n_chunks, chunk_size, chunks);
+            add_request(&head, buffer.content);
+            handle_compress(get_request(&head), n_chunks, chunk_size, chunks);
             if (DEBUG) printf("* Compressed for %d DONE\n", buffer.content);
 			break;
+
         case CLOSE:
-            // TODO: remove from llist
+            if (remove_from_llist(&head, buffer.content) < 0) {
+                // XXX: ??
+            }
             break;
+
 		default:
 			fprintf(stderr, "Message %d not understood\n", buffer.type);
             exit(EXIT_FAILURE);
