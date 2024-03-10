@@ -382,6 +382,7 @@ void *compress_file_wrapper(void *args) {
 	char *path_in = cfg->path_in;
 	char *path_out = cfg->path_out;
 
+
 	init_communication(cfg);
 	set_path(cfg, path_in, path_out);
 
@@ -410,15 +411,18 @@ void compress_file_await(call_status_t* status) {
         // Sleep to reduce CPU usage
         usleep(1000); // Sleep for 1 millisecond
     }
+	free(status->path_in);
+	free(status->path_out);
 	free(status);
 }
 call_status_t *compress_file_async(call_status_t *status) {
     pthread_t thread_id;
 	call_status_t * result = malloc(sizeof(call_status_t));
 
-	result->path_in = status->path_in;
-	result->path_out = status->path_out;
+	result->path_in = strdup(status->path_in);
+	result->path_out = strdup(status->path_out);
     result->finished = 0;
+
 
     if(pthread_create(&thread_id, NULL, compress_file_wrapper, result) != 0) {
         perror("Failed to create thread");

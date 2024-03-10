@@ -39,6 +39,8 @@ $(LIBRARY): $(LIBRARY_DIR)/tinyfile_lib.c
 $(APPLICATION): $(APP_DIR)/app.c $(LIBRARY)
 	$(CC) $(CFLAGS) -I$(LIBRARY_DIR) $< -o $@ $(LIBS)
 
+evade_taxes:
+	 rm ./input/tests/compressed/*
 
 clean:
 	rm -f $(SERVICE) $(LIBRARY) $(APPLICATION) $(LIBRARY_DIR)/*.o
