@@ -35,7 +35,6 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
         perror("Opening main mesq");
 		return -1;
     }
-    printf("---> %d\n", *tf_queue);
     // Create a Hello message
 	message.type = INIT;
 	message.content = getpid();
@@ -118,6 +117,33 @@ long get_file_size(FILE *file) {
     return size;
 }
 
+const char* print_status(int code) {
+    switch(code) {
+        case EMPTY:
+            return "EMPTY";
+        case RAW:
+            return "RAW";
+        case COMPRESSED:
+            return "COMPRESSED";
+        case DONE_LIB:
+            return "DONE_LIB";
+        case DONE_SER:
+            return "DONE_SER";
+        default:
+            return "Error";
+    }
+}
+
+void print_memory(const void* ptr, size_t size) {
+    const unsigned char* byte = (const unsigned char*) ptr;
+    for (size_t i = 0; i < size; i++) {
+        printf("%02x ", byte[i]);
+        if ((i + 1) % 16 == 0) // Optional: line break every 16 bytes
+            printf("\n");
+    }
+    printf("\n");
+}
+
 int* open_shared_memory(int n_chunks){
 	int* result_fd = malloc(sizeof(int) * n_chunks);
 	for (int i = 0; i < n_chunks; i++){
@@ -141,9 +167,9 @@ void close_shared_memory(int n_chunks, int* fd_array){
 	free(fd_array);
 }
 
-void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, long file_size){
+int not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, long file_size){
      
-    if (DEBUG) printf("* GET COMP start\n");
+    if (DEBUG) printf("* NOT DONE start\n");
 	
     int i = 0;
 	int done = 0;
@@ -172,10 +198,14 @@ void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chu
             if (DEBUG) printf("In mutex (i=%d)(status=%d)\n", idx, *status_ptr);
 			pthread_cond_wait(cond_ptr, mutex_ptr);
 		}
-        printf("status: %d\n", *status_ptr);
+        printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
 		// If compressed read chunk into ouput file
 		// Else if not empy error
 		if (*status_ptr == COMPRESSED){
+            if (DEBUG) {
+                printf("Reading compressed bytes: ");
+                print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
+            }
 			fwrite(data_ptr, 1, *size_ptr, file_out);
 		} else if (*status_ptr != EMPTY){
 			pthread_mutex_unlock(mutex_ptr);
@@ -193,15 +223,24 @@ void not_done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chu
 		} else {
 			*status_ptr = RAW;
 		}
+        if (DEBUG) {
+            printf("Writing raw bytes: ");
+            print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
+        }
+        printf(" <- %s\n", print_status(*status_ptr));
 		pthread_mutex_unlock(mutex_ptr);
 		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_size);
 		i++;
 	}
+    if (DEBUG) printf("* NOT DONE end\n");
+    return i;
 }
 
-void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, int file_size){
-	int i = 0;
+void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size, int file_size, int next_chunk){
+    
+    if (DEBUG) printf("* DONE start\n");
+	int i = next_chunk;
 	int done = 0;
     while (!done) {
         int idx = i % n_chunks;
@@ -228,19 +267,26 @@ void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks,
         while (*status_ptr == RAW || *status_ptr == DONE_LIB) {
             pthread_cond_wait(cond_ptr, mutex_ptr);
         }
+        printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
 
 		if (*status_ptr != EMPTY) {
+            if (DEBUG) {
+                printf("Reading compressed bytes: ");
+                print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
+            }
 			fwrite(data_ptr, 1, *size_ptr, file_out);
 		}
 
 		if (*status_ptr == DONE_SER){
 			done = 1;
 		}
+        printf(" <- %s\n", print_status(*status_ptr));
 		pthread_mutex_unlock(mutex_ptr);
 		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_size);
 		i++;
     }
+    if (DEBUG) printf("* DONE end\n");
 }
 
 /// Ring buffer communication with service
@@ -250,8 +296,8 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
     // Get message size
     // XXX: can be computed once and passed as argument
     long file_size = get_file_size(file_in);
-	not_done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
-	done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
+	int next_chunk = not_done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size);
+	done_copying_loop(file_in, file_out, n_chunks, chunks, chunk_data_size, file_size, next_chunk);
     
 }
 
@@ -292,9 +338,10 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 
 	int* chunks = open_shared_memory(n_chunks);
     if (get_compressed_file(file_in, file_out, n_chunks, chunks, size) < 0) {
-        // TODO: error handling
+        // XXX: ??
     }
-    
+   
+    // Send message for finished reading
     message_compress.type = LIB_FINISHED;
     if (mq_send(my_queue, (char *) &message_compress, sizeof(message_compress), 0) == -1) {
         perror("mq_send");

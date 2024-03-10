@@ -138,6 +138,22 @@ void close_shared_memory(size_t num_seg, int* segments) {
 	}
 }
 
+const char* print_status(int code) {
+    switch(code) {
+        case EMPTY:
+            return "EMPTY";
+        case RAW:
+            return "RAW";
+        case COMPRESSED:
+            return "COMPRESSED";
+        case DONE_LIB:
+            return "DONE_LIB";
+        case DONE_SER:
+            return "DONE_SER";
+        default:
+            return "Error";
+    }
+}
 
 void print_memory(const void* ptr, size_t size) {
     const unsigned char* byte = (const unsigned char*) ptr;
@@ -172,9 +188,9 @@ void start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 		pthread_mutex_lock(mutex_ptr);
 
         while (*status_ptr != RAW && *status_ptr != DONE_LIB) {
-            if (DEBUG) printf("In mutex (i=%d)(status=%d)\n", idx, *status_ptr);
             pthread_cond_wait(cond_ptr, mutex_ptr);
         }
+        printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
 		// Now chunk_pointer points to the data
 		printf("Some random mf just wrote in segment %d:\n", idx);
 		print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
@@ -183,6 +199,7 @@ void start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
         *status_ptr = (*status_ptr == RAW) ? COMPRESSED : DONE_SER;
         done = (*status_ptr == DONE_SER);
 		// Unmap the shared memory object
+        printf(" <- chunk: %d (%s)\n", idx, print_status(*status_ptr));
 		pthread_mutex_unlock(mutex_ptr);
 		pthread_cond_signal(cond_ptr);
 		munmap(chunk_ptr, total_seg_size);
@@ -228,7 +245,6 @@ void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *seg
     ssize_t bytes_read;
     bytes_read = mq_receive(compress_mq, (char *) &buffer, sizeof(message_compress_t), NULL);
     if (bytes_read < 0) {
-        perror("Receiving done message");
         exit(EXIT_FAILURE);
     }
     if (buffer.type != LIB_FINISHED) {
@@ -268,7 +284,6 @@ int main(int argc, char *argv[]) {
 
     ssize_t bytes_read;
     message_main_t buffer;
-    printf("Receiving messages: %d\n", main_mq);
     while (1) {
 
         // Read main buffer
