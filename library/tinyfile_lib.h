@@ -23,6 +23,15 @@ typedef struct message_compress {
     unsigned int size;
 } message_compress_t;
 
+typedef struct call_status{
+    mqd_t my_queue;
+    mqd_t tf_queue;
+    char *path_in;
+    char *path_out;
+    int finished; // Pointer to shared variable indicating if the task is finished
+    pthread_spinlock_t spinlock; // Pointer to spinlock for synchronizing access to finished
+} call_status_t;
+
 
 #define EMPTY 0x00
 #define RAW 0x01
@@ -30,8 +39,12 @@ typedef struct message_compress {
 #define DONE_LIB 0x03
 #define DONE_SER 0x04
 
-int init_communication(mqd_t *my_queue, mqd_t *tf_queue);
-int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out);
-int close_communication(mqd_t my_queue, mqd_t tf_queue);
+int init_communication(call_status_t *status);
+void set_path(call_status_t *status, char *path_in, char *path_out);
+int compress_file(call_status_t *status);
+void compress_file_async(call_status_t *status);
+void compress_file_await(call_status_t *status);
+int close_communication(call_status_t *status);
+
 
 #endif

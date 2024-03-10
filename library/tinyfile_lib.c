@@ -23,22 +23,36 @@ const unsigned int STATUS_OFFSET    = MUTEX_SIZE    + COND_SIZE;
 const unsigned int SIZE_OFFSET      = STATUS_OFFSET + INFO_SIZE;
 
 
+void set_path(call_status_t *status, char *path_in, char *path_out) {
+	if (status->path_in != NULL && status->path_out != NULL){
+		free(status->path_in);
+		free(status->path_out);
+	}
+	status->path_in = strdup(path_in);
+	status->path_out = strdup(path_out);
+}
 
 // Start the communication with the Daemon
-int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
+int init_communication(call_status_t *status){
     printf("* Init communication START\n");
+
+	// Initialize spinlock and paths
+    pthread_spin_init(&status->spinlock, 0);
+	status->path_in = NULL;
+	status->path_out = NULL;
+
 	message_main_t message;
     if (DEBUG) printf("* INIT start\n");
 	// Open Deamon queue
-	*tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
-    if (*tf_queue == (mqd_t)-1) {
+	status->tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
+    if (status->tf_queue == (mqd_t)-1) {
         perror("Opening main mesq");
 		return -1;
     }
     // Create a Hello message
 	message.type = INIT;
 	message.content = getpid();
-    if (mq_send(*tf_queue, (char *) &message, sizeof(message), 0) == -1) {
+    if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
@@ -56,8 +70,8 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
     attr.mq_curmsgs = 0; 	// Number of messages currently in queue
 
     // Create the message queue
-    *my_queue = mq_open(queue_name, O_CREAT | O_RDWR, 0644, &attr);
-    if (*my_queue == (mqd_t)-1) {
+    status->my_queue = mq_open(queue_name, O_CREAT | O_RDWR, 0644, &attr);
+    if (status->my_queue == (mqd_t)-1) {
         perror("mq_open");
 		return -1;
     }
@@ -66,24 +80,27 @@ int init_communication(mqd_t *my_queue, mqd_t *tf_queue){
 	return 0;
 }
 
-int close_communication(mqd_t my_queue, mqd_t tf_queue){
+int close_communication(call_status_t *status){
+
+	// Destroy mutex
+    pthread_spin_destroy(&status->spinlock);
 
     if (DEBUG) printf("* CLOSE start\n");
 
     message_main_t message;
 	message.type = CLOSE;
 	message.content = getpid();
-    if (mq_send(tf_queue, (char *) &message, sizeof(message), 0) == -1) {
+    if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
-	if (mq_close(tf_queue) == -1) {
+	if (mq_close(status->tf_queue) == -1) {
         perror("mq_close");
 		return -1;
     }
 
 	// Close private queue
-	if (mq_close(my_queue) == -1) {
+	if (mq_close(status->my_queue) == -1) {
         perror("mq_close");
 		return -1;
     }
@@ -95,7 +112,13 @@ int close_communication(mqd_t my_queue, mqd_t tf_queue){
         perror("mq_unlink");
 		return -1;
     }
+
+	// Free setup memory
+    free(status->path_in);
+    free(status->path_out);
+
     if (DEBUG) printf("* CLOSE end\n");
+
 	return 0;
 }
 
@@ -291,7 +314,7 @@ void done_copying_loop(FILE* file_in, FILE* file_out, int n_chunks, int* chunks,
 
 /// Ring buffer communication with service
 /// Write/read until receive whole compressed file
-int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size) {
+void get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks, int chunk_data_size) {
     
     // Get message size
     // XXX: can be computed once and passed as argument
@@ -301,16 +324,15 @@ int get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunks
     
 }
 
-int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const char *path_out){
-    
+int compress_file(call_status_t *status){
     // Open file to compress
-	FILE *file_in = fopen(path_in, "rb");
+	FILE *file_in = fopen(status->path_in, "rb");
 	if (!file_in) {
 		perror("Could not open input file");
 		return -1;
 	}
     // Check that path out
-    FILE *file_out = fopen(path_out, "wb");
+    FILE *file_out = fopen(status->path_out, "wb");
     if (!file_out) {
         perror("Could not open output file");
         return -1; 
@@ -324,12 +346,12 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 	message_main.type = REQUEST;
 	message_main.content = getpid();
     // XXX: include file size?
-    if (mq_send(tf_queue, (char *) &message_main, sizeof(message_main), 0) == -1) {
+    if (mq_send(status->tf_queue, (char *) &message_main, sizeof(message_main), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
 	// Wait for response in individual mesq
-	if (mq_receive(my_queue, (char *) &message_compress,  sizeof(message_compress), NULL) == -1){
+	if (mq_receive(status->my_queue, (char *) &message_compress,  sizeof(message_compress), NULL) == -1){
         perror("mq_receive");
 		return -1;
 	}
@@ -337,13 +359,11 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
     unsigned int size = message_compress.size;
 
 	int* chunks = open_shared_memory(n_chunks);
-    if (get_compressed_file(file_in, file_out, n_chunks, chunks, size) < 0) {
-        // XXX: ??
-    }
+    get_compressed_file(file_in, file_out, n_chunks, chunks, size);
    
     // Send message for finished reading
     message_compress.type = LIB_FINISHED;
-    if (mq_send(my_queue, (char *) &message_compress, sizeof(message_compress), 0) == -1) {
+    if (mq_send(status->my_queue, (char *) &message_compress, sizeof(message_compress), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
@@ -354,3 +374,46 @@ int compress_file(mqd_t my_queue, mqd_t tf_queue, const char *path_in, const cha
 	return 0;
 }
 
+
+void *compress_file_wrapper(void *args) {
+     call_status_t *cfg = (call_status_t *)args;
+
+    // Call the actual compress_file function
+    compress_file(cfg);
+
+    // Update the finished variable under the spinlock
+    pthread_spin_lock(&cfg->spinlock);
+    cfg->finished = 1; // Indicate that the work is done
+    pthread_spin_unlock(&cfg->spinlock);
+
+
+    return NULL;
+}
+
+void compress_file_await(call_status_t* status) {
+	    while (1) {
+        int done = 0;
+        pthread_spin_lock(&status->spinlock);
+        done = status->finished; 
+        pthread_spin_unlock(&status->spinlock);
+
+        if (done) {
+            break;
+        }
+        // Sleep to reduce CPU usage
+        usleep(1000); // Sleep for 1 millisecond
+    }
+}
+
+void compress_file_async(call_status_t *status) {
+    pthread_t thread_id;
+    status->finished = 0;
+
+    if(pthread_create(&thread_id, NULL, compress_file_wrapper, status) != 0) {
+        perror("Failed to create thread");
+        exit(EXIT_FAILURE);
+    }
+
+    // Detach the thread to free resources upon completion
+    pthread_detach(thread_id);
+}
