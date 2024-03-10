@@ -208,7 +208,7 @@ void start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 }
 
 
-void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *segments) {
+void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *chunks) {
     
     // XXX: get best process
     key_t key;
@@ -233,14 +233,14 @@ void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *seg
 	// Write information about chunks to process
     message_compress_t buffer;
     buffer.type = MEMORY_INFO;
-    buffer.chunks = num_seg;
-	buffer.size = seg_size;
+    buffer.chunks = n_chunks;
+	buffer.size = chunk_size;
     if (mq_send(compress_mq, (char *) &buffer, sizeof(message_compress_t), 0) == -1) {
         perror("mq_send");
         exit(EXIT_FAILURE);
     }
 
-	start_compressing(num_seg, seg_size, segments);
+	start_compressing(n_chunks, chunk_size, chunks);
     // Wait for done response
     ssize_t bytes_read;
     bytes_read = mq_receive(compress_mq, (char *) &buffer, sizeof(message_compress_t), NULL);
@@ -251,18 +251,31 @@ void handle_compress(unsigned int pid, size_t num_seg, size_t seg_size, int *seg
         // XXX: ??
     }
 
-    
+    // Clean status
+    for (int i=0; i<n_chunks; i++) {
+		
+        // Map the shared memory object
+		int total_seg_size = chunk_size + META_DATA_SIZE;
+		void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[i], 0);
+		if (chunk_ptr == MAP_FAILED) {
+			perror("mmap");
+            exit(EXIT_FAILURE);
+		}
+        unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
+        *status_ptr = EMPTY;
+	}
+
 }
 
 
 
 int main(int argc, char *argv[]) {
 
-    size_t n_sms, sms_size;
-    parse_args(argc, argv, &n_sms, &sms_size);
+    size_t n_chunks, chunk_size;
+    parse_args(argc, argv, &n_chunks, &chunk_size);
 
-	int segments[n_sms];
-	init_shared_memory(n_sms, &sms_size, segments);
+	int chunks[n_chunks];
+	init_shared_memory(n_chunks, &chunk_size, chunks);
 
     mqd_t main_mq; 
     struct mq_attr attr;
@@ -300,7 +313,7 @@ int main(int argc, char *argv[]) {
 			break;
 
 		case REQUEST:
-            handle_compress(buffer.content, n_sms, sms_size, segments);
+            handle_compress(buffer.content, n_chunks, chunk_size, chunks);
             if (DEBUG) printf("* Compressed for %d DONE\n", buffer.content);
 			break;
         case CLOSE:
@@ -312,7 +325,7 @@ int main(int argc, char *argv[]) {
 		}
     }
     
-	close_shared_memory(n_sms, segments);
+	close_shared_memory(n_chunks, chunks);
 
 	mq_close(main_mq);
 	mq_unlink(TINY_FILE_QUEUE);
