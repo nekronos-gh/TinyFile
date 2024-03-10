@@ -11,7 +11,7 @@
 #include "tinyfile_lib.h"
 
 #define MAX_MSG_SIZE 1024
-#define DEBUG 1
+#define DEBUG 0
 const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
 const unsigned int COND_SIZE = sizeof(pthread_cond_t);
 const unsigned int INFO_SIZE = sizeof(unsigned int); 
@@ -36,8 +36,8 @@ void set_path(call_status_t *status, char *path_in, char *path_out) {
 int init_communication(call_status_t *status){
     printf("* Init communication START\n");
 
-	// Initialize spinlock and paths
-    pthread_spin_init(&status->spinlock, 0);
+	pthread_spin_init(&status->spinlock, 0);
+
 	status->path_in = NULL;
 	status->path_out = NULL;
 
@@ -51,7 +51,7 @@ int init_communication(call_status_t *status){
     }
     // Create a Hello message
 	message.type = INIT;
-	message.content = getpid();
+	message.content = (unsigned int) pthread_self();
     if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
@@ -60,7 +60,8 @@ int init_communication(call_status_t *status){
 	char queue_name[64]; // Buffer to hold the queue name
 
     // Format the queue name with the prefix and PID
-    sprintf(queue_name, "/%d", getpid());
+    sprintf(queue_name, "/%u", (unsigned int) pthread_self());
+	printf("CLIENT: %s --> %u\n", queue_name, message.content);
 
     // Set the attributes of the message queue
     struct mq_attr attr;
@@ -83,17 +84,17 @@ int init_communication(call_status_t *status){
 int close_communication(call_status_t *status){
 
 	// Destroy mutex
-    pthread_spin_destroy(&status->spinlock);
 
     if (DEBUG) printf("* CLOSE start\n");
 
     message_main_t message;
 	message.type = CLOSE;
-	message.content = getpid();
+	message.content = (unsigned int) pthread_self();
     if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
     }
+
 	if (mq_close(status->tf_queue) == -1) {
         perror("mq_close");
 		return -1;
@@ -107,7 +108,7 @@ int close_communication(call_status_t *status){
 
 	// Remove message queue from system
 	char queue_name[64];
-    sprintf(queue_name, "/%d", getpid());
+    sprintf(queue_name, "/%u", (unsigned int) pthread_self());
     if (mq_unlink(queue_name) == -1) {
         perror("mq_unlink");
 		return -1;
@@ -118,6 +119,7 @@ int close_communication(call_status_t *status){
     free(status->path_out);
 
     if (DEBUG) printf("* CLOSE end\n");
+	pthread_spin_destroy(&status->spinlock);
 
 	return 0;
 }
@@ -344,7 +346,7 @@ int compress_file(call_status_t *status){
 
     // Send START message
 	message_main.type = REQUEST;
-	message_main.content = getpid();
+	message_main.content = (unsigned int) pthread_self();
     // XXX: include file size?
     if (mq_send(status->tf_queue, (char *) &message_main, sizeof(message_main), 0) == -1) {
         perror("mq_send");
@@ -376,7 +378,13 @@ int compress_file(call_status_t *status){
 
 
 void *compress_file_wrapper(void *args) {
-     call_status_t *cfg = (call_status_t *)args;
+	call_status_t *cfg = (call_status_t *)args;
+
+	char *path_in = cfg->path_in;
+	char *path_out = cfg->path_out;
+
+	init_communication(cfg);
+	set_path(cfg, path_in, path_out);
 
     // Call the actual compress_file function
     compress_file(cfg);
@@ -385,7 +393,7 @@ void *compress_file_wrapper(void *args) {
     pthread_spin_lock(&cfg->spinlock);
     cfg->finished = 1; // Indicate that the work is done
     pthread_spin_unlock(&cfg->spinlock);
-
+	close_communication(cfg);
 
     return NULL;
 }
@@ -403,17 +411,24 @@ void compress_file_await(call_status_t* status) {
         // Sleep to reduce CPU usage
         usleep(1000); // Sleep for 1 millisecond
     }
+	free(status);
 }
 
-void compress_file_async(call_status_t *status) {
+call_status_t *compress_file_async(call_status_t *status) {
     pthread_t thread_id;
-    status->finished = 0;
+	call_status_t * result = malloc(sizeof(call_status_t));
 
-    if(pthread_create(&thread_id, NULL, compress_file_wrapper, status) != 0) {
+	result->path_in = status->path_in;
+	result->path_out = status->path_out;
+    result->finished = 0;
+
+    if(pthread_create(&thread_id, NULL, compress_file_wrapper, result) != 0) {
         perror("Failed to create thread");
         exit(EXIT_FAILURE);
     }
 
     // Detach the thread to free resources upon completion
     pthread_detach(thread_id);
+	return result;
 }
+

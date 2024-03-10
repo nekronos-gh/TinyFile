@@ -220,7 +220,8 @@ void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *
     attr.mq_curmsgs = 0;
 
     char queue_string[256];
-    sprintf(queue_string, "/%d", pid);
+    sprintf(queue_string, "/%u", pid);
+	printf("CLIENT: %s\n", queue_string);
     compress_mq = mq_open(queue_string, O_RDWR);
     if (compress_mq == (mqd_t) -1) {
         perror("mq_open");
