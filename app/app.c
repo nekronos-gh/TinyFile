@@ -12,13 +12,12 @@ int main() {
 
 	call_status_t *async1 = compress_file_async(&lib_call);
 
-	set_path(&lib_call, "./input/tests/raw/sloppy.txt", "./input/tests/compressed/gupta.gov");
+	set_path(&lib_call, "./input/tests/raw/sloppy.txt", "./input/tests/compressed/sloppy.gov");
 
 	call_status_t *async2 = compress_file_async(&lib_call);
 
 	compress_file_await(async2);
-
-	set_path(&lib_call, "./input/tests/raw/megatoppy.txt", "./input/tests/compressed/megatoppy.gov");
+	set_path(&lib_call, "./input/tests/raw/gupta.txt", "./input/tests/compressed/gupta.gov");
 	compress_file(&lib_call);
 	compress_file_await(async1);
 

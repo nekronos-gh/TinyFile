@@ -313,7 +313,7 @@ int main(int argc, char *argv[]) {
 		case REQUEST:
             add_request(&head, buffer.content);
             handle_compress(get_request(&head), n_chunks, chunk_size, chunks);
-            if (DEBUG) printf("* Compressed for %d DONE\n", buffer.content);
+            if (DEBUG) printf("* Compressed for %u DONE\n", buffer.content);
 			break;
 
         case CLOSE:
