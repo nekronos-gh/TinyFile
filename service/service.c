@@ -1,11 +1,10 @@
-#include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <string.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-#include <pthread.h>
+#include <sys/time.h>
 #include <mqueue.h>
 
 #include "service.h"
@@ -189,11 +188,11 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
         }
         if (DEBUG) {
             printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
-		    printf("Some random mf just wrote in segment %d:\n", idx);
+		    printf("Someone wrote in segment %d:\n", idx);
     		print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
         }
 
-        // TODO: COMPRESSE
+        // TODO: COMPRESS
         *status_ptr = (*status_ptr == RAW) ? COMPRESSED : DONE_SER;
         done = (*status_ptr == DONE_SER);
 		// Unmap the shared memory object
@@ -209,9 +208,7 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 
 void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *chunks) {
     
-    // XXX: get best process
     key_t key;
-
 
     // Send memory info on individual mesq
     mqd_t compress_mq;
@@ -263,38 +260,79 @@ void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
         *status_ptr = EMPTY;
 	}
-    if (!DEBUG) printf("* Compressed for %d DONE (%d)\n", pid, reps);
+    if (!DEBUG) printf("** Compressed for %zu DONE (%d)\n", pid, reps);
 
 }
 
 
+void* worker_thread(void* arg) {
+   
+    // Get arguments
+    worker_thread_args_t* cfg = (worker_thread_args_t*)arg;
+    if (!DEBUG) 
+        printf("** Worker thread args: n_chunks %d, size %d, root pid %d\n", cfg->n_chunks, cfg->chunk_size, cfg->root->pid);
+
+    // Set up memory
+	int chunks[cfg->n_chunks];
+	init_shared_memory(cfg->n_chunks, &cfg->chunk_size, chunks);
+    // ?? Set up signal handler
+
+    while (1) {
+        // - Get best request
+        unsigned int tid = get_request(cfg->root);
+        // - Handle request
+        if (!DEBUG) printf("** Worker thread: HANDLING %zu\n", tid);
+        handle_compress(tid, cfg->n_chunks, cfg->chunk_size, chunks);
+    }
+
+	close_shared_memory(cfg->n_chunks, chunks);
+    return NULL;
+}
+
 
 int main(int argc, char *argv[]) {
 
-    size_t n_chunks, chunk_size;
-    parse_args(argc, argv, &n_chunks, &chunk_size);
-
-	int chunks[n_chunks];
-	init_shared_memory(n_chunks, &chunk_size, chunks);
-
+    // Set up request queue
     mqd_t main_mq; 
     struct mq_attr attr;
-
     attr.mq_flags = 0; 
-    attr.mq_maxmsg = 10;  // System max limit in: /proc/sys/fs/mqueue/msg_max
+    attr.mq_maxmsg = 10;
     attr.mq_msgsize = sizeof(message_main_t); 
     attr.mq_curmsgs = 0; 
 
-    // Setup main q
     main_mq = mq_open(TINY_FILE_QUEUE, O_RDONLY | O_CREAT, 0644, &attr);
     if (main_mq == (mqd_t)-1) {
         perror("mq_open");
         exit(EXIT_FAILURE);
     }
+    // Get args
+    size_t n_chunks, chunk_size;
+    parse_args(argc, argv, &n_chunks, &chunk_size);
 
-    // Create linked list
-    node_t* head = malloc(sizeof(node_t));
 
+    // Root node
+    process_node_t* root = new_process_node(0);
+
+    // Set up worker thread
+    worker_thread_args_t* worker_args = malloc(sizeof(worker_thread_args_t));
+    if (!worker_args) {
+        perror("Error in worker args malloc");
+        exit(EXIT_FAILURE);
+    }
+    worker_args->n_chunks = n_chunks;
+    worker_args->chunk_size = chunk_size;
+    worker_args->root = root;
+
+
+    // Create worker thread
+    pthread_t thread_id;
+    int result = pthread_create(&thread_id, NULL, worker_thread , worker_args);
+    if (result != 0) {
+        perror("Failed to create worker thread");
+        exit(EXIT_FAILURE);
+    }
+
+    // Dispatcher loop
     ssize_t bytes_read;
     message_main_t buffer;
     while (1) {
@@ -307,22 +345,19 @@ int main(int argc, char *argv[]) {
         }
 		switch(buffer.type){
 		 case INIT:
-            if (add_to_llist(&head, buffer.content) < 0) {
-                // XXX: ??
-            } 
+            if (!DEBUG) 
+                printf("-- Dispatcher thread: INIT from %u\n", buffer.pid);
+            add_process(root, buffer.pid);
 			break;
 
 		case REQUEST:
-            if (!DEBUG) printf("* Got request from %d\n", buffer.content);
-            add_request(&head, buffer.content);
-            unsigned int responding_to = get_request(&head);
-            handle_compress(responding_to, n_chunks, chunk_size, chunks);
+            add_request(root, buffer.pid, buffer.tid);
+            if (!DEBUG) 
+                printf("-- Dispatcher thread: Adding requests %u to %u\n", buffer.tid, buffer.pid);
 			break;
 
         case CLOSE:
-            if (remove_from_llist(&head, buffer.content) < 0) {
-                // XXX: ??
-            }
+            remove_process(root, buffer.pid);
             break;
 
 		default:
@@ -331,9 +366,13 @@ int main(int argc, char *argv[]) {
 		}
     }
     
-	close_shared_memory(n_chunks, chunks);
-
+    printf("WTF");
 	mq_close(main_mq);
 	mq_unlink(TINY_FILE_QUEUE);
     return 0;
 }
+
+
+
+
+

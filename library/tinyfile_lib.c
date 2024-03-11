@@ -11,7 +11,6 @@
 #include "tinyfile_lib.h"
 
 #define MAX_MSG_SIZE 1024
-#define DEBUG 0
 const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
 const unsigned int COND_SIZE = sizeof(pthread_cond_t);
 const unsigned int INFO_SIZE = sizeof(unsigned int); 
@@ -33,8 +32,8 @@ void set_path(call_status_t *status, char *path_in, char *path_out) {
 }
 
 // Start the communication with the Daemon
-int init_communication(call_status_t *status){
-    if (DEBUG) printf("* Init communication START\n");
+int init_communication(call_status_t *status, int async){
+    if (!DEBUG) printf("* Init START\n");
 
 	pthread_spin_init(&status->spinlock, 0);
 
@@ -43,18 +42,22 @@ int init_communication(call_status_t *status){
 
 	message_main_t message;
     if (DEBUG) printf("* INIT start\n");
-	// Open Deamon queue
-	status->tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
+
+    // Open Deamon queue
+    status->tf_queue = mq_open(TINY_FILE_QUEUE, O_WRONLY);
     if (status->tf_queue == (mqd_t)-1) {
         perror("Opening main mesq");
-		return -1;
+        return -1;
     }
-    // Create a Hello message
-	message.type = INIT;
-	message.content = (unsigned int) pthread_self();
-    if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
-        perror("mq_send");
-		return -1;
+    if (!async) {
+        // Create a Hello message
+        message.type = INIT;
+        message.tid = (unsigned int) pthread_self();
+        message.pid = getpid();
+        if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
+            perror("mq_send");
+            return -1;
+        }
     }
 
 	char queue_name[64]; // Buffer to hold the queue name
@@ -76,7 +79,7 @@ int init_communication(call_status_t *status){
 		return -1;
     }
 
-    if (DEBUG) printf("* INIT end\n");
+    if (!DEBUG) printf("* INIT end\n");
 	return 0;
 }
 
@@ -88,7 +91,8 @@ int close_communication(call_status_t *status){
 
     message_main_t message;
 	message.type = CLOSE;
-	message.content = (unsigned int) pthread_self();
+	message.tid = (unsigned int) pthread_self();
+    message.pid = getpid();
     if (mq_send(status->tf_queue, (char *) &message, sizeof(message), 0) == -1) {
         perror("mq_send");
 		return -1;
@@ -345,7 +349,8 @@ int compress_file(call_status_t *status){
 
     // Send START message
 	message_main.type = REQUEST;
-	message_main.content = (unsigned int) pthread_self();
+	message_main.tid = (unsigned int) pthread_self();
+	message_main.pid = getpid();
     // XXX: include file size?
     if (mq_send(status->tf_queue, (char *) &message_main, sizeof(message_main), 0) == -1) {
         perror("mq_send");
@@ -383,7 +388,7 @@ void *compress_file_wrapper(void *args) {
 	char *path_out = cfg->path_out;
 
 
-	init_communication(cfg);
+	init_communication(cfg, N_CALL);
 	set_path(cfg, path_in, path_out);
 
     // Call the actual compress_file function
