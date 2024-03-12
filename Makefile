@@ -15,16 +15,19 @@ APP_DIR=./app
 SERVICE=$(BIN_DIR)/tinyfile_service
 LIBRARY=$(LIBRARY_DIR)/lib$(LIB_NAME).a
 APPLICATION=$(BIN_DIR)/sample_app
+TEST=$(BIN_DIR)/test
 
 .PHONY: all service library app clean
 
-all: service library app
+all: service library app test
 
 service: $(SERVICE)
 
 library: $(LIBRARY)
 
 app: $(APPLICATION)
+
+test: $(TEST)
 
 # Service target
 
@@ -40,8 +43,7 @@ $(LIBRARY): $(LIBRARY_DIR)/tinyfile_lib.c
 $(APPLICATION): $(APP_DIR)/app.c $(LIBRARY)
 	$(CC) $(CFLAGS) -I$(LIBRARY_DIR) $< -o $@ $(LIBS) -pthread -lrt
 
-evade_taxes:
-	 rm ./input/tests/compressed/*
-
+$(TEST): $(APP_DIR)/test.c $(LIBRARY)
+	$(CC) $(CFLAGS) -I$(LIBRARY_DIR) $< -o $@ $(LIBS) -pthread -lrt
 clean:
 	rm -f $(SERVICE) $(LIBRARY) $(APPLICATION) $(LIBRARY_DIR)/*.o

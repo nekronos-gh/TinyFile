@@ -143,7 +143,7 @@ int main(int argc, char *argv[]) {
     fclose(settings_file);
 
     // The states and sizes to iterate over
-    const char* states[] = {"sync", "async"};
+    const char* states[] = {"1", "0"};
     const char* file_sizes[] = {"Tiny", "Small", "Medium", "Large", "Huge"};
     int num_states = sizeof(states) / sizeof(states[0]);
     int num_sizes = sizeof(file_sizes) / sizeof(file_sizes[0]);
@@ -152,15 +152,15 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_states; i++) {
         for (int j = 0; j < num_sizes; j++) {
             char arg[1024];
-            snprintf(arg, sizeof(arg), "/input/list_%s", file_sizes[j]);
+            snprintf(arg, sizeof(arg), "./input/test_%s", file_sizes[j]);
 
             char settings_env[2048];
             snprintf(settings_env, sizeof(settings_env), "%s,%s,%s", server_settings, states[i], file_sizes[j]);
             setenv("SETTINGS", settings_env, 1);
 
-            if (strcmp(states[i], "sync") == 0) {
+            if (strcmp(states[i], "1") == 0) {
                 multiple_files_sync(arg);
-            } else if (strcmp(states[i], "async") == 0) {
+            } else if (strcmp(states[i], "0") == 0) {
                 multiple_files_async(arg);
             }
         }
