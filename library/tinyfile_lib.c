@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <time.h>
 
 #include "tinyfile_lib.h"
 
@@ -337,6 +338,7 @@ void get_compressed_file(FILE* file_in, FILE* file_out, int n_chunks, int* chunk
 
 int compress_file(call_status_t *status){
 
+    struct timespec start_time, end_time;
     // Open file to compress
     FILE *file_in = fopen(status->path_in, "rb");
     if (!file_in) {
@@ -355,6 +357,7 @@ int compress_file(call_status_t *status){
     message_compress_t message_compress;
 
     // Send START message
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
     message_main.type = REQUEST;
     message_main.tid = (unsigned int) pthread_self();
     message_main.pid = getpid();
@@ -373,6 +376,7 @@ int compress_file(call_status_t *status){
 
     int* chunks = open_shared_memory(n_chunks);
     get_compressed_file(file_in, file_out, n_chunks, chunks, size);
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
 
     // Send message for finished reading
     message_compress.type = LIB_FINISHED;
@@ -383,6 +387,10 @@ int compress_file(call_status_t *status){
     close_shared_memory(n_chunks, chunks);
     fclose(file_out);
     fclose(file_in);
+
+    long long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000LL +
+                           (end_time.tv_nsec - start_time.tv_nsec);
+    printf("%lld\n", elapsed_ns);
 
     return 0;
 }
