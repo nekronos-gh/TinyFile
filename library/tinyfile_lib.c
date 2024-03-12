@@ -397,7 +397,7 @@ void *compress_file_wrapper(void *args) {
     pthread_spin_lock(&cfg->spinlock);
     cfg->finished = 1; // Indicate that the work is done
     pthread_spin_unlock(&cfg->spinlock);
-	close_communication(cfg);
+	close_communication(cfg, 0);
 
     return NULL;
 }

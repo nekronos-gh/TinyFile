@@ -8,6 +8,7 @@
 
 #define FIRST_CALL 0x0
 #define N_CALL 0x1
+#define LAST_CLOSE 0x1
 
 #define DEBUG 0
 
@@ -50,7 +51,7 @@ void set_path(call_status_t *status, char *path_in, char *path_out);
 int compress_file(call_status_t *status);
 call_status_t *compress_file_async(call_status_t *status);
 void compress_file_await(call_status_t *status);
-int close_communication(call_status_t *status);
+int close_communication(call_status_t *status, int last_close);
 
 
 #endif

@@ -225,7 +225,7 @@ int main() {
 	
 	// }2
     compress_file_await(async2);
-    close_communication(&lib_call);
+    close_communication(&lib_call, LAST_CLOSE);
 
     return 0;
 }
