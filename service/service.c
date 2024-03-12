@@ -309,10 +309,12 @@ void* worker_thread(void* arg) {
 
     while (1) {
         // - Get best request
-        unsigned int tid = get_request(cfg->root);
+        unsigned int tid = get_request(cfg->mutex, cfg->root);
         // - Handle request
-        if (!DEBUG) printf("** Worker thread: HANDLING %u\n", tid);
-        handle_compress(tid, cfg->n_chunks, cfg->chunk_size, chunks);
+        if (tid) {
+            if (!DEBUG) printf("** Worker thread: HANDLING %u\n", tid);
+            handle_compress(tid, cfg->n_chunks, cfg->chunk_size, chunks);
+        }
     }
 
 	close_shared_memory(cfg->n_chunks, chunks);
@@ -342,6 +344,13 @@ int main(int argc, char *argv[]) {
 
     // Root node
     process_node_t* root = new_process_node(0);
+    // Mutex
+    pthread_mutex_t mutex;
+    int res = pthread_mutex_init(&mutex, NULL);
+    if (res != 0) {
+        perror("Mutex initialization failed");
+        exit(EXIT_FAILURE);
+    }
 
     // Set up worker thread
     worker_thread_args_t* worker_args = malloc(sizeof(worker_thread_args_t));
@@ -352,6 +361,7 @@ int main(int argc, char *argv[]) {
     worker_args->n_chunks = n_chunks;
     worker_args->chunk_size = chunk_size;
     worker_args->root = root;
+    worker_args->mutex = &mutex;
 
 
     // Create worker thread
@@ -373,21 +383,22 @@ int main(int argc, char *argv[]) {
             perror("mq_receive");
             exit(EXIT_FAILURE);
         }
+
 		switch(buffer.type){
 		 case INIT:
             if (!DEBUG) 
                 printf("-- Dispatcher thread: INIT from %u\n", buffer.pid);
-            add_process(root, buffer.pid);
+            add_process(&mutex, root, buffer.pid);
 			break;
 
 		case REQUEST:
-            add_request(root, buffer.pid, buffer.tid);
+            add_request(&mutex, root, buffer.pid, buffer.tid);
             if (!DEBUG) 
                 printf("-- Dispatcher thread: Adding requests %u to %u\n", buffer.tid, buffer.pid);
 			break;
 
         case CLOSE:
-            remove_process(root, buffer.pid);
+            remove_process(&mutex, root, buffer.pid);
             break;
 
 		default:
@@ -396,7 +407,7 @@ int main(int argc, char *argv[]) {
 		}
     }
     
-    printf("WTF");
+    pthread_mutex_destroy(&mutex);
 	mq_close(main_mq);
 	mq_unlink(TINY_FILE_QUEUE);
     return 0;

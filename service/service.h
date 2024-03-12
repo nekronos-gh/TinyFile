@@ -50,12 +50,12 @@ typedef struct process_node {
     request_node_t* request;
     int total_requests;
     int live_requests;
-    pthread_mutex_t mutex;
 } process_node_t;
 
 
 typedef struct worker_thread_args {
     process_node_t* root;
+    pthread_mutex_t* mutex;
     size_t n_chunks;
     size_t chunk_size;
 } worker_thread_args_t;
@@ -69,76 +69,66 @@ process_node_t* new_process_node(unsigned int pid) {
         node->pid = pid;
         node->total_requests = 0;
         node->live_requests= 0;
-        pthread_mutex_init(&node->mutex, NULL); 
     }
     return node;
 }
 
 void free_process_node(process_node_t* node) {
     if (node != NULL) {
-        pthread_mutex_destroy(&node->mutex); 
         free(node);
     }
 }
 
-void add_process(process_node_t* node, unsigned int pid) {
+void add_process(pthread_mutex_t* mutex, process_node_t* node, unsigned int pid) {
 
     // Get lock for curr
-    pthread_mutex_lock(&node->mutex);
+    pthread_mutex_lock(mutex);
 
     // Add new node after curr
     process_node_t* new_node = new_process_node(pid);
     new_node->next = node->next;
     node->next = new_node;
     // Release curr
-    pthread_mutex_unlock(&node->mutex);
+    pthread_mutex_unlock(mutex);
 
 }
 
 
-void remove_process(process_node_t* node, unsigned int pid) {
+void remove_process(pthread_mutex_t* mutex, process_node_t* node, unsigned int pid) {
     if (node == NULL) return;
 
-    pthread_mutex_lock(&node->mutex);
+    pthread_mutex_lock(mutex);
+
     // Only one node in the list
     if (node->next == node) {         
         if (node->pid == pid) {
-            pthread_mutex_unlock(&node->mutex);
             free_process_node(node);
         } else {
-            pthread_mutex_unlock(&node->mutex); 
+            perror("Error removing process\n");
         }
+        pthread_mutex_unlock(mutex);
         return;
     }
-
-    pthread_mutex_unlock(&curr->mutex);
-
 
     process_node_t* curr = node;
     process_node_t* prev = NULL;
     
     do {
-        if (prev != NULL) 
-            pthread_mutex_unlock(&prev->mutex);
         prev = curr;
         curr = curr->next;
-        pthread_mutex_lock(&curr->mutex);
     } while (curr != node && curr->pid != pid);
 
     if (curr->pid == pid) { 
-
-        if (prev != NULL) 
-            pthread_mutex_unlock(&prev->mutex);        
         
         // adjust links
         prev->next = curr->next;
-        pthread_mutex_unlock(&curr->mutex);
         free_process_node(curr); 
 
     } else {
-        pthread_mutex_unlock(&curr->mutex);
-        // XXX: ??
+        perror("Error removing process\n");
     }
+    
+    pthread_mutex_unlock(mutex);
 }
 
 void _add_request(process_node_t* node, unsigned int tid) {
@@ -165,44 +155,37 @@ void _add_request(process_node_t* node, unsigned int tid) {
 
 }
 
-void add_request(process_node_t* node, unsigned int pid, unsigned int tid) {
+void add_request(pthread_mutex_t* mutex, process_node_t* node, unsigned int pid, unsigned int tid) {
     if (node == NULL) return;
 
-    pthread_mutex_lock(&node->mutex);
+    pthread_mutex_lock(mutex);
+
     // Only one node in the list
     if (node->next == node) {         
         if (node->pid == pid) {
             _add_request(node, tid);
-            pthread_mutex_unlock(&node->mutex);
         } else {
-            pthread_mutex_unlock(&node->mutex); 
             // XXX: ??
             printf("Error adding request");
             exit(EXIT_FAILURE); 
         }
+        pthread_mutex_unlock(mutex);
         return;
     }
+
     process_node_t* curr = node;
     process_node_t* prev = NULL;
 
     do {
-        if (prev != NULL) 
-            pthread_mutex_unlock(&prev->mutex);
         prev = curr;
         curr = curr->next;
-        pthread_mutex_lock(&curr->mutex);
     } while (curr != node && curr->pid != pid);
 
     if (curr->pid == pid) { 
-        if (prev != NULL) 
-            pthread_mutex_unlock(&prev->mutex);        
-        
         // adjust links
         _add_request(curr, tid);
-        pthread_mutex_unlock(&curr->mutex);
 
     } else {
-        pthread_mutex_unlock(&curr->mutex);
         // XXX: ??
         printf("Error adding request");
         exit(EXIT_FAILURE); 
@@ -226,43 +209,38 @@ unsigned int pop_request(process_node_t* node) {
 }
 
 /// Find the node with less total request and at least one live
-unsigned int get_request(process_node_t* node) {
+unsigned int get_request(pthread_mutex_t* mutex, process_node_t* node) {
+    
+    pthread_mutex_lock(mutex);
+
     if (node == NULL) {
         printf("Error getting request");
         exit(EXIT_FAILURE); 
     }
 
     process_node_t* curr = node;
-    process_node_t* tmp;
     process_node_t* candidate = NULL;
     int found_live_requests = 0;
+    unsigned int request_id;
     
     do {
-        curr = node; 
-        candidate = NULL;
-        found_live_requests = 0; 
-
-        do {
-            pthread_mutex_lock(&curr->mutex);
-            if (curr->live_requests > 0) {
-                found_live_requests = 1; 
-                if (candidate == NULL || curr->total_requests < candidate->total_requests) {
-                    candidate = curr;
-                }
+        if (curr->live_requests > 0) {
+            found_live_requests = 1; 
+            if (candidate == NULL || curr->total_requests < candidate->total_requests) {
+                candidate = curr;
             }
-            tmp = curr;
- 	    printf("2 ---> %p -> %p\n", curr, curr->next);
-	    curr = curr->next;
-            pthread_mutex_unlock(&tmp->mutex); 
-            
-        } while (curr != node);
-    // Loop until candidate
-    } while (candidate == NULL || candidate->live_requests <= 0); 
+        }
+        curr = curr->next;
+    } while (curr != node);
 
-    printf("--->**** %p\n", candidate);
-    pthread_mutex_lock(&candidate->mutex);
-    unsigned int request_id = pop_request(candidate);
-    pthread_mutex_unlock(&candidate->mutex);
+    if (!candidate) {
+        request_id = 0;
+    }
+    else {
+        request_id = pop_request(candidate);
+    }
+
+    pthread_mutex_unlock(mutex);
     return request_id;
 }
 
