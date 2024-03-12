@@ -152,7 +152,7 @@ void multiple_files_async(char* file_list) {
     int i = 0;
 
     char line[1024]; 
-    while (fgets(line, sizeof(line), file) != NULL) {
+    while (fgets(line, sizeof(line), file) != NULL || i == n_files) {
         
         line[strcspn(line, "\n")] = 0;
         char* output = append_extension(line);

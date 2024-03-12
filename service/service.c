@@ -7,7 +7,7 @@
 #include <sys/time.h>
 #include <mqueue.h>
 
-// #include <snappy-c.h>
+#include <snappy-c.h>
 
 #include "service.h"
 #define MAX_MSG_SIZE 1024
@@ -45,14 +45,14 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
         switch (opt) {
             case 'n':
                 *n_sms = atoi(optarg);
-				if (*n_sms > 999 || *n_sms < 0){
+				if (*n_sms > 20 || *n_sms < 0){
 					fprintf(stderr, "usage: n_sms must be greater than 0 or less than 999\n");
 					exit(EXIT_FAILURE);
 				}
                 break;
             case 's':
                 *sms_size = atoi(optarg);
-				if (*sms_size > 999 || *sms_size < 0){
+				if (*sms_size > 2048 || *sms_size < 0){
 					fprintf(stderr, "usage: n_sms must be greater than 0 or less than 999\n");
 					exit(EXIT_FAILURE);
 				}
@@ -166,11 +166,12 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 
     int i = 0;
     int done = 0;
+    int total_seg_size = chunk_data_size + META_DATA_SIZE;
+    size_t max_compressed_length = snappy_max_compressed_length(chunk_data_size);
     while (!done) {
         int idx = i % n_chunks;
 
         // Map the shared memory object
-        int total_seg_size = chunk_data_size + META_DATA_SIZE;
         void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[idx], 0);
         if (chunk_ptr == MAP_FAILED) {
             perror("mmap");
@@ -195,23 +196,21 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
             print_memory(data_ptr, *size_ptr);
         }
 
-        // TODO: COMPRESS
-        /*
-        // Tmp buffer to output compressed
-        char* tmp_buffer = (char*)malloc(chunk_data_size);
-        if (!tmp_buffer) {
+        char* tmp_buffer = (char*)malloc(max_compressed_length * sizeof(char));
+        size_t compressed_length;
+        
+	if (!tmp_buffer) {
             // Handle allocation failure
             perror("Allocating tmp chunk\n");
             exit(EXIT_FAILURE);
         }
-
-        size_t max_compressed_length = snappy_max_compressed_length(chunk_data_size);
-        size_t compressed_length = chunk_data_size;
+	printf("Reading %u from chunk (%d)\n", *size_ptr, i);
         snappy_status status = snappy_compress(data_ptr, *size_ptr, tmp_buffer, &compressed_length);
 
-        if (status != SNAPPY_OK) {
-            perror("Error compressing chunk\n");
-            exit(EXIT_FAILURE);
+        if (status < 0) {
+            printf("Error compressing (max comp length %ld, comp length %ld)\n", max_compressed_length, compressed_length);
+            perror("snappy\n");
+	    exit(EXIT_FAILURE);
         }
 
         // Truncate bytes to chunk
@@ -222,7 +221,7 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
         memcpy(data_ptr, tmp_buffer, bytes_compressed);
 
         free(tmp_buffer);
-        */
+
         *status_ptr = (*status_ptr == RAW) ? COMPRESSED : DONE_SER;
         done = (*status_ptr == DONE_SER);
         // Unmap the shared memory object
