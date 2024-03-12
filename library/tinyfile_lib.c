@@ -390,7 +390,10 @@ int compress_file(call_status_t *status){
 
     long long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000LL +
                            (end_time.tv_nsec - start_time.tv_nsec);
-    printf("%lld\n", elapsed_ns);
+
+    
+    char* env_value = getenv("SETTINGS");
+    printf("%s, %lld\n", env_value, elapsed_ns);
 
     return 0;
 }
