@@ -7,22 +7,23 @@
 #include <sys/time.h>
 #include <mqueue.h>
 
+#include <snappy-c.h>
+
 #include "service.h"
-
 #define MAX_MSG_SIZE 1024
-const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
-const unsigned int COND_SIZE = sizeof(pthread_cond_t);
-const unsigned int INFO_SIZE = sizeof(unsigned int); 
-const unsigned int META_DATA_SIZE = MUTEX_SIZE + COND_SIZE + 2 * INFO_SIZE;
 
-const unsigned int MUTEX_OFFSET = 0;
-const unsigned int COND_OFFSET = MUTEX_SIZE;
-const unsigned int STATUS_OFFSET = MUTEX_SIZE + COND_SIZE;
-const unsigned int SIZE_OFFSET = STATUS_OFFSET + INFO_SIZE;
+#define MUTEX_SIZE (sizeof(pthread_mutex_t))
+#define COND_SIZE (sizeof(pthread_cond_t))
+#define INFO_SIZE (sizeof(unsigned int))
 
+#define META_DATA_SIZE (MUTEX_SIZE + COND_SIZE + 2 * INFO_SIZE)
 
+#define MUTEX_OFFSET 0
+#define COND_OFFSET (MUTEX_SIZE)
+#define STATUS_OFFSET (MUTEX_SIZE + COND_SIZE)
+#define SIZE_OFFSET (STATUS_OFFSET + INFO_SIZE)
 
-typedef struct msgbuf {
+ struct msgbuf {
     long mtype;
     char mtext[MAX_MSG_SIZE];
 } message_buf;
@@ -32,14 +33,14 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
     // Define long options
     static struct option long_options[] = {
         {"n_sms", required_argument, 0, 'n'},
-        {"sms_size", required_argument, 0, 's'},
+       {"sms_size", required_argument, 0, 's'},
         {0, 0, 0, 0} 
-    };
+   };
 
     // Parse the options
 	// Default values
 	*n_sms = 5;
-	*sms_size = 10;
+	*sms_size = 512;
     while ((opt = getopt_long(argc, argv, "n:s:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'n':
@@ -163,7 +164,7 @@ void print_memory(const void* ptr, size_t size) {
 
 int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 
-    int i = 0;
+	int i = 0;
 	int done = 0;
 	while (!done) {
 		int idx = i % n_chunks;
@@ -176,23 +177,52 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
             exit(EXIT_FAILURE);
 		}
 
+
         pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
         pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
         unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + SIZE_OFFSET);
+  	void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
 
-		pthread_mutex_lock(mutex_ptr);
+	pthread_mutex_lock(mutex_ptr);
 
         while (*status_ptr != RAW && *status_ptr != DONE_LIB) {
             pthread_cond_wait(cond_ptr, mutex_ptr);
-        }
+        } 
         if (DEBUG) {
             printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
 		    printf("Someone wrote in segment %d:\n", idx);
-    		print_memory(chunk_ptr + META_DATA_SIZE, *size_ptr);
+    		print_memory(data_ptr, *size_ptr);
         }
 
         // TODO: COMPRESS
+
+	// Tmp buffer to output compressed
+	char* tmp_buffer = (char*)malloc(chunk_data_size);
+	if (!tmp_buffer) {
+		// Handle allocation failure
+		perror("Allocating tmp chunk\n");
+		exit(EXIT_FAILURE);
+	}
+
+	size_t max_compressed_length = snappy_max_compressed_length(chunk_data_size);
+	size_t compressed_length = chunk_data_size;
+	snappy_status status = snappy_compress(data_ptr, *size_ptr, tmp_buffer, &compressed_length);
+
+	if (status != SNAPPY_OK) {
+	    perror("Error compressing chunk\n");
+	    exit(EXIT_FAILURE);
+	}
+	
+	// Truncate bytes to chunk
+	size_t bytes_compressed = (chunk_data_size >= compressed_length) ? compressed_length : chunk_data_size;
+	*size_ptr = bytes_compressed;
+
+	// Write compressed bytes
+	memcpy(data_ptr, tmp_buffer, bytes_compressed);
+
+	free(tmp_buffer);
+
         *status_ptr = (*status_ptr == RAW) ? COMPRESSED : DONE_SER;
         done = (*status_ptr == DONE_SER);
 		// Unmap the shared memory object
@@ -260,7 +290,7 @@ void handle_compress(unsigned int pid, size_t n_chunks, size_t chunk_size, int *
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
         *status_ptr = EMPTY;
 	}
-    if (!DEBUG) printf("** Compressed for %zu DONE (%d)\n", pid, reps);
+    if (!DEBUG) printf("** Compressed for %u DONE (%d)\n", pid, reps);
 
 }
 
@@ -270,7 +300,7 @@ void* worker_thread(void* arg) {
     // Get arguments
     worker_thread_args_t* cfg = (worker_thread_args_t*)arg;
     if (!DEBUG) 
-        printf("** Worker thread args: n_chunks %d, size %d, root pid %d\n", cfg->n_chunks, cfg->chunk_size, cfg->root->pid);
+        printf("** Worker thread args: n_chunks %ld, size %ld, root pid %d\n", cfg->n_chunks, cfg->chunk_size, cfg->root->pid);
 
     // Set up memory
 	int chunks[cfg->n_chunks];
@@ -281,7 +311,7 @@ void* worker_thread(void* arg) {
         // - Get best request
         unsigned int tid = get_request(cfg->root);
         // - Handle request
-        if (!DEBUG) printf("** Worker thread: HANDLING %zu\n", tid);
+        if (!DEBUG) printf("** Worker thread: HANDLING %u\n", tid);
         handle_compress(tid, cfg->n_chunks, cfg->chunk_size, chunks);
     }
 

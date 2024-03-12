@@ -111,9 +111,12 @@ void remove_process(process_node_t* node, unsigned int pid) {
         return;
     }
 
+    pthread_mutex_unlock(&curr->mutex);
+
+
     process_node_t* curr = node;
     process_node_t* prev = NULL;
-
+    
     do {
         if (prev != NULL) 
             pthread_mutex_unlock(&prev->mutex);
@@ -223,7 +226,6 @@ unsigned int pop_request(process_node_t* node) {
 }
 
 /// Find the node with less total request and at least one live
-
 unsigned int get_request(process_node_t* node) {
     if (node == NULL) {
         printf("Error getting request");
@@ -231,6 +233,7 @@ unsigned int get_request(process_node_t* node) {
     }
 
     process_node_t* curr = node;
+    process_node_t* tmp;
     process_node_t* candidate = NULL;
     int found_live_requests = 0;
     
@@ -240,7 +243,8 @@ unsigned int get_request(process_node_t* node) {
         found_live_requests = 0; 
 
         do {
-            pthread_mutex_lock(&curr->mutex);
+ 	    printf("1 ---> %p (%d)\n", curr, curr->pid);
+	    pthread_mutex_lock(&curr->mutex);
             
             if (curr->live_requests > 0) {
                 found_live_requests = 1; 
@@ -248,14 +252,16 @@ unsigned int get_request(process_node_t* node) {
                     candidate = curr;
                 }
             }
-            
-            pthread_mutex_unlock(&curr->mutex); 
-            curr = curr->next;
+            tmp = curr;
+ 	    printf("2 ---> %p -> %p\n", curr, curr->next);
+	    curr = curr->next;
+            pthread_mutex_unlock(&tmp->mutex); 
             
         } while (curr != node);
     // Loop until candidate
     } while (candidate == NULL || candidate->live_requests <= 0); 
 
+    printf("--->**** %p\n", candidate);
     pthread_mutex_lock(&candidate->mutex);
     unsigned int request_id = pop_request(candidate);
     pthread_mutex_unlock(&candidate->mutex);

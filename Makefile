@@ -27,8 +27,9 @@ library: $(LIBRARY)
 app: $(APPLICATION)
 
 # Service target
+
 $(SERVICE): $(SERVICE_DIR)/service.c
-	$(CC) $(CFLAGS) $< -o $@
+	        $(CC) $(CFLAGS) $< -o $@ -pthread -lrt -lsnappy
 
 # Library target (static library)
 $(LIBRARY): $(LIBRARY_DIR)/tinyfile_lib.c
@@ -37,7 +38,7 @@ $(LIBRARY): $(LIBRARY_DIR)/tinyfile_lib.c
 
 # Application target
 $(APPLICATION): $(APP_DIR)/app.c $(LIBRARY)
-	$(CC) $(CFLAGS) -I$(LIBRARY_DIR) $< -o $@ $(LIBS)
+	$(CC) $(CFLAGS) -I$(LIBRARY_DIR) $< -o $@ $(LIBS) -pthread -lrt
 
 evade_taxes:
 	 rm ./input/tests/compressed/*

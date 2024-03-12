@@ -11,16 +11,15 @@
 #include "tinyfile_lib.h"
 
 #define MAX_MSG_SIZE 1024
-const unsigned int MUTEX_SIZE = sizeof(pthread_mutex_t);
-const unsigned int COND_SIZE = sizeof(pthread_cond_t);
-const unsigned int INFO_SIZE = sizeof(unsigned int); 
-const unsigned int META_DATA_SIZE = MUTEX_SIZE + COND_SIZE + 2 * INFO_SIZE;
+#define MUTEX_SIZE (sizeof(pthread_mutex_t))
+#define COND_SIZE (sizeof(pthread_cond_t))
+#define INFO_SIZE (sizeof(unsigned int))
+#define META_DATA_SIZE (MUTEX_SIZE + COND_SIZE + 2 * INFO_SIZE)
 
-const unsigned int MUTEX_OFFSET     = 0;
-const unsigned int COND_OFFSET      = MUTEX_SIZE;
-const unsigned int STATUS_OFFSET    = MUTEX_SIZE    + COND_SIZE;
-const unsigned int SIZE_OFFSET      = STATUS_OFFSET + INFO_SIZE;
-
+#define MUTEX_OFFSET 0
+#define COND_OFFSET (MUTEX_SIZE)
+#define STATUS_OFFSET (MUTEX_SIZE + COND_SIZE)
+#define SIZE_OFFSET (STATUS_OFFSET + INFO_SIZE)
 
 void set_path(call_status_t *status, char *path_in, char *path_out) {
 	if (status->path_in != NULL && status->path_out != NULL){
