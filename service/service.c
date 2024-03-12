@@ -7,7 +7,7 @@
 #include <sys/time.h>
 #include <mqueue.h>
 
-#include <snappy-c.h>
+// #include <snappy-c.h>
 
 #include "service.h"
 #define MAX_MSG_SIZE 1024
@@ -164,74 +164,74 @@ void print_memory(const void* ptr, size_t size) {
 
 int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
 
-	int i = 0;
-	int done = 0;
-	while (!done) {
-		int idx = i % n_chunks;
-		
+    int i = 0;
+    int done = 0;
+    while (!done) {
+        int idx = i % n_chunks;
+
         // Map the shared memory object
-		int total_seg_size = chunk_data_size + META_DATA_SIZE;
-		void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[idx], 0);
-		if (chunk_ptr == MAP_FAILED) {
-			perror("mmap");
+        int total_seg_size = chunk_data_size + META_DATA_SIZE;
+        void* chunk_ptr = mmap(NULL, total_seg_size, PROT_READ|PROT_WRITE, MAP_SHARED, chunks[idx], 0);
+        if (chunk_ptr == MAP_FAILED) {
+            perror("mmap");
             exit(EXIT_FAILURE);
-		}
+        }
 
 
         pthread_mutex_t* mutex_ptr = (pthread_mutex_t*)((char*)chunk_ptr+ MUTEX_OFFSET);
         pthread_cond_t* cond_ptr = (pthread_cond_t*)((char*)chunk_ptr + COND_OFFSET);
         unsigned int* status_ptr = (unsigned int*)((char*)chunk_ptr + STATUS_OFFSET);
         unsigned int* size_ptr = (unsigned int*)((char*)chunk_ptr + SIZE_OFFSET);
-  	void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
+        void* data_ptr = (char*)(chunk_ptr + META_DATA_SIZE);
 
-	pthread_mutex_lock(mutex_ptr);
+        pthread_mutex_lock(mutex_ptr);
 
         while (*status_ptr != RAW && *status_ptr != DONE_LIB) {
             pthread_cond_wait(cond_ptr, mutex_ptr);
         } 
         if (DEBUG) {
             printf("\n -> chunk: %d (%s)\n", idx, print_status(*status_ptr));
-		    printf("Someone wrote in segment %d:\n", idx);
-    		print_memory(data_ptr, *size_ptr);
+            printf("Someone wrote in segment %d:\n", idx);
+            print_memory(data_ptr, *size_ptr);
         }
 
         // TODO: COMPRESS
+        /*
+        // Tmp buffer to output compressed
+        char* tmp_buffer = (char*)malloc(chunk_data_size);
+        if (!tmp_buffer) {
+            // Handle allocation failure
+            perror("Allocating tmp chunk\n");
+            exit(EXIT_FAILURE);
+        }
 
-	// Tmp buffer to output compressed
-	char* tmp_buffer = (char*)malloc(chunk_data_size);
-	if (!tmp_buffer) {
-		// Handle allocation failure
-		perror("Allocating tmp chunk\n");
-		exit(EXIT_FAILURE);
-	}
+        size_t max_compressed_length = snappy_max_compressed_length(chunk_data_size);
+        size_t compressed_length = chunk_data_size;
+        snappy_status status = snappy_compress(data_ptr, *size_ptr, tmp_buffer, &compressed_length);
 
-	size_t max_compressed_length = snappy_max_compressed_length(chunk_data_size);
-	size_t compressed_length = chunk_data_size;
-	snappy_status status = snappy_compress(data_ptr, *size_ptr, tmp_buffer, &compressed_length);
+        if (status != SNAPPY_OK) {
+            perror("Error compressing chunk\n");
+            exit(EXIT_FAILURE);
+        }
 
-	if (status != SNAPPY_OK) {
-	    perror("Error compressing chunk\n");
-	    exit(EXIT_FAILURE);
-	}
-	
-	// Truncate bytes to chunk
-	size_t bytes_compressed = (chunk_data_size >= compressed_length) ? compressed_length : chunk_data_size;
-	*size_ptr = bytes_compressed;
+        // Truncate bytes to chunk
+        size_t bytes_compressed = (chunk_data_size >= compressed_length) ? compressed_length : chunk_data_size;
+        *size_ptr = bytes_compressed;
 
-	// Write compressed bytes
-	memcpy(data_ptr, tmp_buffer, bytes_compressed);
+        // Write compressed bytes
+        memcpy(data_ptr, tmp_buffer, bytes_compressed);
 
-	free(tmp_buffer);
-
+        free(tmp_buffer);
+        */
         *status_ptr = (*status_ptr == RAW) ? COMPRESSED : DONE_SER;
         done = (*status_ptr == DONE_SER);
-		// Unmap the shared memory object
+        // Unmap the shared memory object
         if (DEBUG) printf(" <- chunk: %d (%s)\n", idx, print_status(*status_ptr));
-		pthread_mutex_unlock(mutex_ptr);
-		pthread_cond_signal(cond_ptr);
-		munmap(chunk_ptr, total_seg_size);
+        pthread_mutex_unlock(mutex_ptr);
+        pthread_cond_signal(cond_ptr);
+        munmap(chunk_ptr, total_seg_size);
         i++;
-	}
+    }
     return i;
 }
 

@@ -29,7 +29,7 @@ app: $(APPLICATION)
 # Service target
 
 $(SERVICE): $(SERVICE_DIR)/service.c
-	        $(CC) $(CFLAGS) $< -o $@ -pthread -lrt -lsnappy
+	        $(CC) $(CFLAGS) $< -o $@ -pthread -lrt #-lsnappy
 
 # Library target (static library)
 $(LIBRARY): $(LIBRARY_DIR)/tinyfile_lib.c

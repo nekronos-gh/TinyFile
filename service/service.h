@@ -104,7 +104,7 @@ void remove_process(pthread_mutex_t* mutex, process_node_t* node, unsigned int p
         if (node->pid == pid) {
             free_process_node(node);
         } else {
-            perror("Error removing process\n");
+            // XXX: ??    
         }
         pthread_mutex_unlock(mutex);
         return;
@@ -190,6 +190,8 @@ void add_request(pthread_mutex_t* mutex, process_node_t* node, unsigned int pid,
         printf("Error adding request");
         exit(EXIT_FAILURE); 
     }
+    
+    pthread_mutex_unlock(mutex);
 }
 
 
@@ -232,7 +234,6 @@ unsigned int get_request(pthread_mutex_t* mutex, process_node_t* node) {
         }
         curr = curr->next;
     } while (curr != node);
-
     if (!candidate) {
         request_id = 0;
     }
