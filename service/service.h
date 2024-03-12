@@ -243,9 +243,7 @@ unsigned int get_request(process_node_t* node) {
         found_live_requests = 0; 
 
         do {
- 	    printf("1 ---> %p (%d)\n", curr, curr->pid);
-	    pthread_mutex_lock(&curr->mutex);
-            
+            pthread_mutex_lock(&curr->mutex);
             if (curr->live_requests > 0) {
                 found_live_requests = 1; 
                 if (candidate == NULL || curr->total_requests < candidate->total_requests) {
