@@ -200,6 +200,7 @@ int start_compressing(size_t n_chunks, size_t chunk_data_size, int *chunks){
             printf("Someone wrote in segment %d:\n", idx);
             print_memory(data_ptr, *size_ptr);
         }
+        
 
         char* tmp_buffer = (char*)malloc(max_compressed_length * sizeof(char));
         size_t compressed_length;
