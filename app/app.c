@@ -94,22 +94,24 @@ char* append_extension(const char* filename) {
     return new_filename;
 }
 
-void single_file(int async, char* file) {
+void single_file(int is_async, char* file) {
 
 	call_status_t lib_call;
     char* output = append_extension(file);
     init_communication(&lib_call, FIRST_CALL);
     set_path(&lib_call, file, output);
         
-    if (async) {
+    if (is_async) {
 	    call_status_t *async = compress_file_async(&lib_call);
         compress_file_await(async);
+        destroy_status(async);
     }
     else {
         compress_file(&lib_call);
     }
 
     close_communication(&lib_call, LAST_CLOSE);
+    destroy_status(&lib_call);
 }
 
 void multiple_files_sync(char* file_list) {
@@ -132,6 +134,7 @@ void multiple_files_sync(char* file_list) {
     }
     
     close_communication(&lib_call, LAST_CLOSE);
+    destroy_status(&lib_call);
     fclose(file);
 }
 
@@ -152,7 +155,7 @@ void multiple_files_async(char* file_list) {
     int i = 0;
 
     char line[1024]; 
-    while (fgets(line, sizeof(line), file) != NULL) {
+    while (fgets(line, sizeof(line), file) != NULL || i == n_files) {
         
         line[strcspn(line, "\n")] = 0;
         char* output = append_extension(line);
@@ -164,9 +167,11 @@ void multiple_files_async(char* file_list) {
 
     for (i=0; i<n_files; i++) {
         compress_file_await(asyncs[i]);
+        destroy_status(asyncs[i]);
     }
     
     close_communication(&lib_call_init, LAST_CLOSE);
+    destroy_status(&lib_call_init)
     fclose(file);
 }
 

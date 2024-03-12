@@ -52,6 +52,6 @@ int compress_file(call_status_t *status);
 call_status_t *compress_file_async(call_status_t *status);
 void compress_file_await(call_status_t *status);
 int close_communication(call_status_t *status, int last_close);
-
+void destroy_status(call_status_t* status);
 
 #endif
