@@ -21,6 +21,12 @@
 #define STATUS_OFFSET (MUTEX_SIZE + COND_SIZE)
 #define SIZE_OFFSET (STATUS_OFFSET + INFO_SIZE)
 
+void destroy_status(call_status_t* status) {
+    free(status->path_in);
+    free(status->path_out);
+    free(status);
+}
+
 void set_path(call_status_t *status, char *path_in, char *path_out) {
     status->path_in = strdup(path_in);
     status->path_out = strdup(path_out);
@@ -115,8 +121,9 @@ int close_communication(call_status_t *status, int last_call){
     }
 
     // Free setup memory
-    free(status->path_in);
-    free(status->path_out);
+    // free(status->path_in);
+    // free(status->path_out);
+    
 
     if (DEBUG) printf("* CLOSE end\n");
     pthread_spin_destroy(&status->spinlock);
@@ -414,9 +421,6 @@ void compress_file_await(call_status_t* status) {
         // Sleep to reduce CPU usage
         usleep(1000); // Sleep for 1 millisecond
     }
-    free(status->path_in);
-    free(status->path_out);
-    free(status);
 }
 call_status_t *compress_file_async(call_status_t *status) {
     pthread_t thread_id;
