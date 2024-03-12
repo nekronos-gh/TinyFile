@@ -27,7 +27,7 @@
 }
 \author{
     \begin{tabular}[t]{cc}
-        \textbf{Eduardo Sanchez Rodriguez} & \textbf{Alberto Molina Felipe} \\
+        \textbf{Eduardo Rodríguez Sánchez} & \textbf{Alberto Molina Felipe} \\
         \texttt{esanchez63@gatech.edu} & \texttt{afelipe3@gatech.edu} \\
     \end{tabular}
 }
@@ -38,22 +38,54 @@
 % **************************************************** OVERALL DESIGN
 \section*{Overall Design}
 
-\subsection*{Understanding the Project}
-\par The project is analogous to the implementation of domains in Xen. The tinyfile service works like \texttt{Dom0}, while each instance of the library in the apps are the different domains. We implemented a single queue for requests to the service and a response queue for each domain to receive responses from the service. Once the connection is established, a ring buffer in shared memory shephered to and from \texttt{Dom0}.
+\subsection*{Introduction}
+\par In this project, we propose an implementation of a compressing service in a linux sistem. The service offers a compression mechanism through shared memory, which can be access from all other processes inside the system. This is achieved though an efficient implementation of a shared memory mechanims, which provides a circular buffer abstraction where processes can directly write data.
+
+\par The architecture is analogous to the implementation of domains in Xen. The tinyfile service works like \texttt{Dom0}, while each instance of the library in the apps are the different domains. Tinifile offers a compressing service throught memory sharing, that allows the clients to request compression of different files.
+
+\subsection*{The role of Tinyfile Service (\texttt{DomU})}
+\par Just as Dom0 manages and controls access to hardware and orchestrates the operations of other virtualized domains, the Tinyfile Service acts as the central command authority, orchestrating the compression operations of multiple application library instances. This service manages the following tasks:
+
+\begin{itemize}
+    \item \textbf{Resource Allocation:} The Tinyfile service initializes by creating the required memory segments and setting up the primary message queue, `\texttt{/tinyservice}', at startup. These inter-process communication mechanisms facilitate communication between the server and applications. Through effective resource allocation, the service ensures that all processes have the necessary resources to work correctly.
+
+    \item \textbf{Communication:} Utilizing message queues, the Tinyfile Service manages a complex communication protocol with client library instances. It processes messages of types \textit{Init}, for starting communication; \textit{Compress Request}, for file compression tasks; and \textit{End}, to signal the termination of requests from an application. This structured communication framework enables the Tinyfile Service to handle requests and manage the flow of information.
+    
+    \item \textbf{File Compression:} At the core of its functionality, the Tinyfile Service processes compression requests sent through the message queues. When receiving a \textit{Compress Request}, the service reads the shared memory segments to perform the requested file compression.
+    
+    \item \textbf{Quality of Service:} The Tinyfile Service implements QoS by prioritizing tasks based on number of request per process. Our strategy ensures fair access to resources and maintains system performance by dynamically adjusting to the workload demands of each application instance.
+\end{itemize}
+
+
+\section*{Role of Application Instances as Domains (\texttt{DomU})}
+In our program architecture, each application instance with its linked Tinyfile library functions like an instance of \texttt{DomU} in the Xen virtualization platform. These instances represent the consumer domains that interact with the central Tinyfile Service (\texttt{Dom0}), using its functionalities for file compression. The key aspects and responsibilities of the application are:
+
+\begin{itemize}
+    \item \textbf{Utilization of Shared Memory:} Application instances utilize the shared memory segments established by the Tinyfile Service for writing file contents and reading compression results.
+    \item \textbf{State Management and Synchronization:} Each application instance manages its state within the shared memory system, similar to how \texttt{DomU} instances maintain their state within the virtualized environment. This includes synchronization mechanisms like mutexes and condition variables to ensure exclusive access to shared resources, guaranteeing data integrity and preventing race conditions.
+	\item \textbf{Synchronous Operations:} The library offers synchronous mode, where application instances wait for the compression task to complete before proceeding. This mode is suitable for scenarios where the subsequent operations depend on the completion of the compression task.
+	\item \textbf{Asynchronous Operations:} The library also offers asynchronous mode, where application instances can proceed with other tasks without waiting for the compression task to finish. This non-blocking approach tries to emulate the non-blocking I/O operations in virtualized environments, allowing application instances to optimize their performance by parallel processing.
+\end{itemize}
 
 \subsection*{Message Queues}
 
 \par At startup, the service creates the shared memory chunks given the arguments and the main message queue. Under the \texttt{'/tinyservice'} message queue library instances can push 3 type of messages:
 \begin{itemize}
-    \item \textit{Init}. When the app calls \texttt{init\_communication()} a message is sent with the process identifier, with the intention of keeping track of all instances for quality of service.
-    \item \textit{Compress Request}. Every time an app wants to compress a file, this message serves as the request and it includes the pid to identify the request. 
-    \item \textit{End}. When the app calls \texttt{end\_communication()}, tells the service that this instance won't be making anymore requests.
+    \item \textbf{Init:} When the app calls \texttt{init\_communication()} a message is sent with the process identifier, with the intention of keeping track of all instances for quality of service.
+    \item \textbf{Compress Request:} Every time an app wants to compress a file, this message serves as the request and it includes the pid to identify the request. 
+    \item \textbf{End:} When the app calls \texttt{close\_communication()}, tells the service that this instance won't be making anymore requests.
 \end{itemize}
 
 
 \par Once a library instance send a compress request in the main message queue it waits in its own queue \texttt{'/<pid>'}. When the service responds to a request it will send a message in this individual queue with the information requires to start the shared memory communication. The message contains how many message chunks and their size.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{AOS-communication.png}
+\end{figure}
+\FloatBarrier
 \newpage
+
 \subsection*{Shared Memory}
 
 \par At startup, the service allocates the shared memory chunks. Each chunk includes a mutex, condition variable, 2 integers and \texttt{sms\_size} bytes to communicate.
@@ -118,12 +150,24 @@ Here, for scheduling or faster compression, the service has caught up to the lib
 \includegraphics[width=0.9\textwidth]{AOS-not-done.png}
 \end{figure}
 \FloatBarrier
+\newpage
 
 
 % **************************************************** SYNC / ASYNC
 \section*{Sync/Async Implementation}
+In our system, we employ both synchronous and asynchronous mechanisms to handle data compression requests. By default, our system operates synchronously, executing a call-and-wait approach to data compressission. This means when a request is made to compress data, the system makes the necessary call to our compression service and halts operation, waiting the completion of the compression process. 
 
+We have also implemented asynchronous calls to the compressing service. Asynchronous processing allows our system to initiate a compression request and then proceed with other operations without having to wait for the compression task to complete. This approach is particularly beneficial in high-performance environments where waiting on tasks could lead to significant inefficiencies. The asynchronous implementation involves modification of the core implementation:
 
+\begin{itemize}
+    \item \textbf{Wrapper Function:} We implemented a wrapper function that encapsulates the original synchronous compression call, so it can be assigned as a task to a thread.
+    
+    \item \textbf{Thread Launch:} For each compression request, a new thread is spawned that executes the wrapper function. This allows the main program to proceed with other tasks while the compression operation is carried out in a separate thread.
+    
+    \item \textbf{Synchronization Mechanism:} We use a structure containing a spinlock and a boolean variable named \textit{done} to manage the state of the asynchronous operation. The spinlock provides thread-safe access to the \textit{done} variable, indicating the completion status of the compression task, similar to what we would accomplish with an atomic variable.
+    
+    \item \textbf{Await Function:} An \textit{async\_await} function is implemented to monitor the completion of the compression task. This function checks the \textit{done} variable within the synchronization structure and waits for the compression task to finish and set \textit{done} to true.
+\end{itemize}
 
 % **************************************************** EXPERIMENT 
 \section*{Experiment}
@@ -132,12 +176,15 @@ Here, for scheduling or faster compression, the service has caught up to the lib
 
 % **************************************************** QOS 
 \section*{Quality of Service}
-\par We implemented QoS in our project by prioritizing tasks based on the number of requests fulfilled, despite the alternative of designing our approach around the volume of bytes processed.
+\par We implemented QoS in our project by prioritizing tasks based on the number of requests fulfilling. At first, we contemplated using a heuristic that accounts the number of bytes generated per process, but due to limitations of time we have considered only go with the simpler option of using number of request as the metric. Implementing QoS that accounts for byte consumption will be left as future work.
 
-\par Prioritizing clients based on request count rather than data size might not reflect the true resource consumption or prioritize critical larger requests, potentially leading to overlooked client needs. However, this approach aims to ensure equitable service access and prevent a few clients with small and frequent requests from dominating resources.
+\par Starting the data exchange process with our service requires an initial communication phase where applications inform the server of their compression requirements. This is implemented through a system-initiated handshake, signaling the server of a new thread that wants a file compression.
 
-\par When an app wants to use the service it must initialize communication, letting the server know there is one more thread that wants to compress files. The service keeps a linked list to keep count of how many request each process has made and if its waiting for a response. 
+\par Our service uses two diferent threads that handle request and compression (request thread and processing thread). The request thread reads the initial communication handshake and adds the process information to a linked list. Every time a process makes a request after the initial handshake, the request will be added into the queue of the corresponding node of the linked list. 
 
+\par The processing thread iterates over the linked list, retrieving the first element of each node's queue and processing the request. It utilizes a round-robin approach so it ensures all processes are given a chance to get their requests fulfilled.
+
+\par Using number of request per process as the heuristic, is implemented with the intent to democratize access to our services, ensuring the same amount of resources are distributed across all clients. By prioritizing tasks based on the number of requests, we acknowledge that we are leaving behind the consideration of data volume or the urgency of larger requests. Nevertheless, our primary objective remains to promote a balanced service across clients and to prevent Denial of Service attacks where a malicious client takes the entirety of the resources.
 % **************************************************** LOGS
 \section*{Logs}
 
