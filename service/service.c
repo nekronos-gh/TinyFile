@@ -28,12 +28,13 @@
     char mtext[MAX_MSG_SIZE];
 } message_buf;
 
-void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
+void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size, int* qos) {
     int opt;
     // Define long options
     static struct option long_options[] = {
         {"n_sms", required_argument, 0, 'n'},
-       {"sms_size", required_argument, 0, 's'},
+        {"sms_size", required_argument, 0, 's'},
+        {"qos", no_argument, 0, 'q'},
         {0, 0, 0, 0} 
    };
 
@@ -41,6 +42,7 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
 	// Default values
 	*n_sms = 5;
 	*sms_size = 512;
+    *qos = 0;
     while ((opt = getopt_long(argc, argv, "n:s:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'n':
@@ -56,6 +58,9 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
 					fprintf(stderr, "usage: sms_size must be (0, 8192]\n");
 					exit(EXIT_FAILURE);
 				}
+                break;
+            case 'q':
+                *qos = 1;
                 break;
             default: 
                 fprintf(stderr, "usage: %s --n_sms <num_segments> --sms_size <size_in_bytes>\n", argv[0]);
@@ -320,6 +325,42 @@ void* worker_thread(void* arg) {
     return NULL;
 }
 
+void fifo_loop(mqd_t main_mq, size_t n_chunks, size_t chunk_size) {
+
+	int chunks[n_chunks];
+	init_shared_memory(n_chunks, &chunk_size, chunks);
+
+    ssize_t bytes_read;
+    message_main_t buffer;
+    while (1) {
+
+        // Read main buffer
+        bytes_read = mq_receive(main_mq, (char *) &buffer, sizeof(message_main_t), NULL);
+        if (bytes_read < 0) {
+            perror("mq_receive");
+            exit(EXIT_FAILURE);
+        }
+
+		switch(buffer.type){
+		 case INIT:
+            // add_process(&mutex, root, buffer.pid);
+			break;
+
+		case REQUEST:
+            // add_request(&mutex, root, buffer.pid, buffer.tid);
+            handle_compress(buffer.tid, n_chunks, chunk_size, chunks);
+			break;
+
+        case CLOSE:
+            // remove_process(&mutex, root, buffer.pid);
+            break;
+
+		default:
+			fprintf(stderr, "Message %d not understood\n", buffer.type);
+            exit(EXIT_FAILURE);
+		}
+    }
+}
 
 int main(int argc, char *argv[]) {
 
@@ -338,9 +379,18 @@ int main(int argc, char *argv[]) {
     }
     // Get args
     size_t n_chunks, chunk_size;
-    parse_args(argc, argv, &n_chunks, &chunk_size);
+    int qos;
+    parse_args(argc, argv, &n_chunks, &chunk_size, &qos);
 
 
+    if (!qos) {
+        fifo_loop(main_mq, n_chunks, chunk_size);
+        mq_close(main_mq);
+	    mq_unlink(TINY_FILE_QUEUE);
+        return 0;
+    }
+
+    
     // Root node
     process_node_t* root = new_process_node(0);
     // Mutex
