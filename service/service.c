@@ -45,15 +45,15 @@ void parse_args(int argc, char *argv[], size_t *n_sms, size_t *sms_size) {
         switch (opt) {
             case 'n':
                 *n_sms = atoi(optarg);
-				if (*n_sms > 20 || *n_sms < 0){
-					fprintf(stderr, "usage: n_sms must be greater than 0 or less than 999\n");
+				if (*n_sms > 20 || *n_sms <= 0){
+					fprintf(stderr, "usage: n_sms must be (0, 20]\n");
 					exit(EXIT_FAILURE);
 				}
                 break;
             case 's':
                 *sms_size = atoi(optarg);
-				if (*sms_size > 2048 || *sms_size < 0){
-					fprintf(stderr, "usage: n_sms must be greater than 0 or less than 999\n");
+				if (*sms_size > 8192 || *sms_size <= 0){
+					fprintf(stderr, "usage: sms_size must be (0, 8192]\n");
 					exit(EXIT_FAILURE);
 				}
                 break;

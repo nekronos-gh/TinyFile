@@ -104,14 +104,14 @@ void single_file(int is_async, char* file) {
     if (is_async) {
 	    call_status_t *async = compress_file_async(&lib_call);
         compress_file_await(async);
-        destroy_status(async);
+        // destroy_status(async);
     }
     else {
         compress_file(&lib_call);
     }
 
     close_communication(&lib_call, LAST_CLOSE);
-    destroy_status(&lib_call);
+    // destroy_status(&lib_call);
 }
 
 void multiple_files_sync(char* file_list) {
@@ -134,7 +134,7 @@ void multiple_files_sync(char* file_list) {
     }
     
     close_communication(&lib_call, LAST_CLOSE);
-    destroy_status(&lib_call);
+    // destroy_status(&lib_call);
     fclose(file);
 }
 
@@ -167,11 +167,11 @@ void multiple_files_async(char* file_list) {
 
     for (i=0; i<n_files; i++) {
         compress_file_await(asyncs[i]);
-        destroy_status(asyncs[i]);
+        // destroy_status(asyncs[i]);
     }
     
     close_communication(&lib_call_init, LAST_CLOSE);
-    destroy_status(&lib_call_init)
+    // destroy_status(&lib_call_init);
     fclose(file);
 }
 
@@ -181,16 +181,13 @@ int main(int argc, char *argv[]) {
     parse_args(argc, argv, &cfg);
 
     if (cfg.file != NULL) {
-        printf("Single async? %d\n", cfg.is_async);
         single_file(cfg.is_async, cfg.file);
     }
     if (cfg.files != NULL) {
         if (cfg.is_async) {
-            printf("multiple Async\n");
             multiple_files_async(cfg.files);
         }
         else {
-            printf("multiple Sync\n");
             multiple_files_sync(cfg.files);
         }
     }

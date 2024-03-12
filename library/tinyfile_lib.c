@@ -22,9 +22,11 @@
 #define SIZE_OFFSET (STATUS_OFFSET + INFO_SIZE)
 
 void destroy_status(call_status_t* status) {
-    free(status->path_in);
+	if (status != NULL) {
+free(status->path_in);
     free(status->path_out);
     free(status);
+    }
 }
 
 void set_path(call_status_t *status, char *path_in, char *path_out) {

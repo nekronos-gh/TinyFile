@@ -1,4 +1,5 @@
 bin/
 report/build/
+input/*.tf
 *.a
 *.o
