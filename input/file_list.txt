@@ -1,2 +1,2 @@
-../input/Small.jpg
-../input/Tiny.txt
+./input/Small.jpg
+./input/Tiny.txt

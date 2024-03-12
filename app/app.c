@@ -1,4 +1,3 @@
-/*
 #include <stdio.h>
 #include <mqueue.h>
 #include <stdlib.h>
@@ -110,7 +109,7 @@ void single_file(int async, char* file) {
         compress_file(&lib_call);
     }
 
-    close_communication(&lib_call);
+    close_communication(&lib_call, LAST_CLOSE);
 }
 
 void multiple_files_sync(char* file_list) {
@@ -132,7 +131,7 @@ void multiple_files_sync(char* file_list) {
 
     }
     
-    close_communication(&lib_call);
+    close_communication(&lib_call, LAST_CLOSE);
     fclose(file);
 }
 
@@ -167,7 +166,7 @@ void multiple_files_async(char* file_list) {
         compress_file_await(asyncs[i]);
     }
     
-    close_communication(&lib_call_init);
+    close_communication(&lib_call_init, LAST_CLOSE);
     fclose(file);
 }
 
@@ -176,13 +175,17 @@ int main(int argc, char *argv[]) {
 
     parse_args(argc, argv, &cfg);
 
-    if (cfg.file != NULL)
+    if (cfg.file != NULL) {
+        printf("Single async? %d\n", cfg.is_async);
         single_file(cfg.is_async, cfg.file);
+    }
     if (cfg.files != NULL) {
         if (cfg.is_async) {
+            printf("multiple Async\n");
             multiple_files_async(cfg.files);
         }
         else {
+            printf("multiple Sync\n");
             multiple_files_sync(cfg.files);
         }
     }
@@ -197,8 +200,7 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-*/
-
+/*
 #include <stdio.h>
 #include <mqueue.h>
 
@@ -229,3 +231,4 @@ int main() {
 
     return 0;
 }
+*/
